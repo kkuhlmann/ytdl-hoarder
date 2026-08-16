@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 license = "AGPL-3.0-only"
 dependencies = [
     "aiofiles>=25.1.0",
-    "alembic>=1.18.5",
+    "alembic>=1.19.1",
     "asyncpg>=0.31.0",
     "cachetools>=7.1.6",
     "fastapi>=0.141.1",
