@@ -113,7 +113,7 @@ RUN sh /tmp/prune_venv.sh /opt/venv && chown -R $UID:$GID /opt/venv
 # safe to copy into either arch's image. Pinning it to the builder's own
 # platform keeps `npm ci` + `next build` out of QEMU on cross-builds, where
 # they would otherwise dominate the multi-arch build time.
-FROM --platform=$BUILDPLATFORM node:25-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:26-alpine AS frontend-builder
 
 WORKDIR /frontend
 COPY frontend/package*.json ./
