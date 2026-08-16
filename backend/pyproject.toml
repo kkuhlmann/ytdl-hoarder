@@ -164,7 +164,7 @@ docstring-code-format = true
 
 [dependency-groups]
 dev = [
-    "greenlet>=3.5.4",
+    "greenlet>=3.5.5",
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
