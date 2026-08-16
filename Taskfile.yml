@@ -1,0 +1,345 @@
+version: '3'
+
+# Common tasks for ytdl-hoarder development and operations
+# Install Task: https://taskfile.dev/installation/
+# Usage: task <taskname>
+
+vars:
+  DATA_DIR: ./data
+  # Neither compose file sets an explicit `name:`, so the project name — and thus the
+  # volume prefix — comes from the directory. Renaming the directory breaks this.
+  POSTGRES_VOLUME: ytdl-hoarder_postgres-data
+  # There is no default docker-compose.yml, so a bare `docker compose exec` fails with
+  # "no configuration file provided" — every exec-style target has to name a file. This
+  # expands to a shell substitution rather than being resolved here, so it costs nothing
+  # on `task --list` and is evaluated only by the tasks that actually use it.
+  #
+  # The dev/prod probe is cosmetic: `docker compose ps` resolves containers by project
+  # label and ignores which -f it was given, so the first branch matches whenever
+  # anything is running. That's harmless — every consumer here is exec-style and also
+  # resolves by project+service, so the named file only has to *define* backend and
+  # postgres. docker-compose.published.yml stays out of the rotation for that reason.
+  COMPOSE_FILE: $(docker compose -f docker-compose.dev.yml ps --services --status running 2>/dev/null | grep -qx backend && echo docker-compose.dev.yml || echo docker-compose.prod.yml)
+
+tasks:
+  # === Setup ===
+
+  setup:dev:
+    desc: Install host dev tooling (uv + backend deps, node deps, task, deno) for contributing
+    # Note: `bash script/bootstrap.sh` is the primary entry point -- it's what
+    # installs `task` itself. This target is a convenience once you already have it.
+    cmds:
+      - bash script/bootstrap.sh
+
+  # === Application Management ===
+
+  dev:
+    desc: Start development mode (separate frontend & backend)
+    cmds:
+      - docker compose -f docker-compose.dev.yml up -d
+
+  published:
+    desc: Start from the published GHCR release image (no local build)
+    cmds:
+      - docker compose -f docker-compose.published.yml up -d --remove-orphans
+
+  update:
+    desc: Pull the newest published release image and restart
+    cmds:
+      - docker compose -f docker-compose.published.yml pull
+      - docker compose -f docker-compose.published.yml up -d --remove-orphans
+
+  prod:
+    desc: Build and start production mode from this checkout (consolidated container)
+    cmds:
+      - docker compose -f docker-compose.prod.yml up -d --build
+
+  up:
+    desc: Start development mode (alias for 'dev')
+    cmds:
+      - task: dev
+
+  down:
+    desc: Stop all services
+    cmds:
+      - docker compose -f docker-compose.dev.yml down 2>/dev/null || true
+      - docker compose -f docker-compose.prod.yml down 2>/dev/null || true
+      - docker compose -f docker-compose.published.yml down 2>/dev/null || true
+
+  restart:
+    desc: Restart all services
+    cmds:
+      - task: down
+      - task: up
+
+  logs:
+    desc: Follow logs from all services
+    cmds:
+      - docker compose -f docker-compose.dev.yml logs -f 2>/dev/null || docker compose -f docker-compose.prod.yml logs -f
+
+  logs-backend:
+    desc: Follow backend logs
+    cmds:
+      - docker compose -f docker-compose.dev.yml logs -f backend 2>/dev/null || docker compose -f docker-compose.prod.yml logs -f backend
+
+  # === Database Management ===
+
+  db:drop-volume:
+    internal: true
+    # No blanket `|| true`: that swallowed "No such volume" when the name was wrong, so
+    # db:reset and clean printed their DELETE confirmation, exited 0, and left the database
+    # fully intact. Absent is reported and tolerated; every other failure (e.g. still in
+    # use) must surface.
+    cmds:
+      - |
+        if docker volume inspect {{.POSTGRES_VOLUME}} >/dev/null 2>&1; then
+          docker volume rm {{.POSTGRES_VOLUME}}
+        else
+          echo "Volume {{.POSTGRES_VOLUME}} does not exist — nothing to remove."
+        fi
+
+  # Shared by db:reset and clean. Each keeps its own prompt: delegating one to the
+  # other would ask twice.
+  _db:reset-impl:
+    internal: true
+    vars:
+      # Task evaluates a task-level `sh:` var before the first cmd, which is the
+      # only window this works in: after `down` the containers are gone and there
+      # is nothing left to infer the mode from. Restarting in the wrong mode is
+      # not cosmetic — a published-image user who runs `task clean` would
+      # otherwise get a surprise 45-minute dev build.
+      #
+      # `docker compose images` reports the *running* image and, like `ps`,
+      # ignores which -f it was given. Matched with grep rather than
+      # --format '{{.Image}}', which Task would expand as its own template.
+      RESTART_MODE:
+        sh: |
+          if docker compose -f docker-compose.dev.yml ps --services --status running 2>/dev/null | grep -qx frontend; then
+            echo dev
+          elif docker compose -f docker-compose.published.yml images backend 2>/dev/null | grep -q 'ghcr\.io/'; then
+            echo published
+          else
+            echo prod
+          fi
+    cmds:
+      - task: down
+      - task: db:drop-volume
+      - task: '{{.RESTART_MODE}}'
+
+  db:reset:
+    desc: Delete database volume and start fresh
+    prompt: This will DELETE all data. Continue?
+    cmds:
+      - task: _db:reset-impl
+
+  # These two deliberately stage the dump through a file inside the container and move it
+  # with `docker compose cp`, rather than redirecting the container's stdio to a host file.
+  # Under Task's built-in shell interpreter that redirect makes `docker compose` fail with
+  # "write /dev/stdout: bad file descriptor" — and pg_dump still exits 0, so the failure
+  # mode is a silent 0-byte backup. Wrapping in `sh -c` does not help; only avoiding the
+  # redirect does. Don't "simplify" these back to `> file` / `< file`.
+  db:backup:
+    desc: Backup the PostgreSQL database
+    vars:
+      BACKUP_FILE: '{{.DATA_DIR}}/backups/ytdl-hoarder-{{now | date "20060102-150405"}}.sql'
+    cmds:
+      - mkdir -p {{.DATA_DIR}}/backups
+      - docker compose -f {{.COMPOSE_FILE}} exec -T postgres pg_dump -U ytdl ytdl_hoarder -f /tmp/ytdl-backup.sql
+      - docker compose -f {{.COMPOSE_FILE}} cp postgres:/tmp/ytdl-backup.sql {{.BACKUP_FILE}}
+      - docker compose -f {{.COMPOSE_FILE}} exec -T postgres rm -f /tmp/ytdl-backup.sql
+      - echo "Database backed up to {{.BACKUP_FILE}}"
+
+  db:restore:
+    desc: Restore from a backup file (usage - task db:restore -- backups/file.sql)
+    prompt: This will OVERWRITE current data. Continue?
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} cp {{.DATA_DIR}}/{{.CLI_ARGS}} postgres:/tmp/ytdl-restore.sql
+      - docker compose -f {{.COMPOSE_FILE}} exec -T postgres psql -U ytdl -d ytdl_hoarder -f /tmp/ytdl-restore.sql
+      - docker compose -f {{.COMPOSE_FILE}} exec -T postgres rm -f /tmp/ytdl-restore.sql
+      - echo "Database restored from {{.CLI_ARGS}}"
+
+  db:migrate:
+    desc: Run database migrations
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} exec backend alembic -c /alembic/alembic.ini upgrade head
+
+  db:shell:
+    desc: Open a psql shell to the database
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} exec postgres psql -U ytdl ytdl_hoarder
+
+  # === Task Queue Management ===
+  # Task state lives entirely in PostgreSQL (task_records). Cancel pending
+  # work from the Tasks UI, or set tasks.purge_on_startup: true to clear
+  # pending tasks at boot.
+
+  tasks:runtime:
+    desc: Show orchestrator runtime state (lanes, queued and running jobs; admin cookie required)
+    # Prod serves the SPA at / and moves every router under /api (API_PREFIX in main.py,
+    # set when the static export is present); dev has no export and mounts at root, so the
+    # path has to be resolved at run time. Probing / tests that same condition. /health is
+    # deliberately exempt from the prefix, so it answers in both modes and cannot tell them
+    # apart — and an unprefixed API path in prod hits the SPA catch-all, which returns HTML
+    # with a 200 rather than failing, so getting this wrong does not announce itself.
+    cmds:
+      - |
+        if curl -sf -o /dev/null --max-time 5 http://localhost:8000/; then
+          PREFIX=/api
+        else
+          PREFIX=
+        fi
+        curl -s --max-time 30 "http://localhost:8000${PREFIX}/tasks/runtime" -H "Cookie: {{.CLI_ARGS}}" | python3 -m json.tool 2>/dev/null || {
+          echo "No JSON from ${PREFIX:-/}tasks/runtime. Is the stack up (task up / task prod), and is the cookie an admin session?" >&2
+          exit 1
+        }
+
+  # === Admin ===
+
+  admin:reset-password:
+    desc: Reset a user's password from the host (usage - task admin:reset-password -- username)
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} exec backend python -m scripts.reset_password {{.CLI_ARGS}}
+
+  # === Clean Start (Nuclear Option) ===
+
+  clean:
+    desc: Clean start - remove DB and restart
+    prompt: This will DELETE all data. Continue?
+    cmds:
+      - task: _db:reset-impl
+
+  # === Backend Development ===
+
+  backend:shell:
+    desc: Open a shell in the backend container
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} exec backend sh
+
+  # Run uv with {{.UV_ARGS}} in backend/. Host-only, so neither compose-file trap
+  # applies — don't extend it to a target that touches a container.
+  _backend:uv:
+    internal: true
+    dir: backend
+    cmds:
+      - uv run {{.UV_ARGS}}
+
+  backend:test:
+    desc: Run backend tests
+    cmds:
+      - task: _backend:uv
+        vars: { UV_ARGS: "pytest" }
+
+  backend:test-file:
+    desc: Run a specific test file (usage - task backend:test-file -- tests/test_file.py)
+    cmds:
+      - task: _backend:uv
+        vars: { UV_ARGS: "pytest {{.CLI_ARGS}}" }
+
+  backend:format:
+    desc: Format backend code with ruff
+    cmds:
+      - task: _backend:uv
+        vars: { UV_ARGS: "ruff format ." }
+
+  backend:lint:
+    desc: Lint backend code with ruff
+    cmds:
+      - task: _backend:uv
+        vars: { UV_ARGS: "ruff check ." }
+
+  backend:lint-fix:
+    desc: Lint and auto-fix backend code
+    cmds:
+      - task: _backend:uv
+        vars: { UV_ARGS: "ruff check --fix ." }
+
+  # === Frontend Development ===
+
+  # Run npm with {{.NPM_ARGS}} on the host if available, otherwise inside the
+  # Docker `frontend` container. Lets the frontend tasks work on a host that has
+  # Docker but no Node/npm installed. (dir: frontend -> host npm runs in
+  # frontend/, and the compose file is one level up at ../.)
+  _frontend:npm:
+    internal: true
+    dir: frontend
+    vars:
+      COMPOSE: docker compose -f ../docker-compose.dev.yml
+    cmds:
+      - >-
+        if command -v npm >/dev/null 2>&1; then
+          npm {{.NPM_ARGS}};
+        elif {{.COMPOSE}} ps --status running --services 2>/dev/null | grep -qx frontend; then
+          echo "npm not on host -> running in the frontend container";
+          {{.COMPOSE}} exec -T frontend npm {{.NPM_ARGS}};
+        else
+          echo "npm is not on the host and the frontend container is not running.";
+          echo "Start it with 'task dev', or install Node 24 on the host.";
+          exit 1;
+        fi
+
+  frontend:dev:
+    desc: Start frontend dev server (host npm; use 'task dev' for Docker)
+    dir: frontend
+    cmds:
+      - >-
+        if command -v npm >/dev/null 2>&1; then
+          npm run dev;
+        else
+          echo "npm not on host. Run the frontend in Docker with 'task dev'.";
+          exit 1;
+        fi
+
+  frontend:build:
+    desc: Build frontend for production (host npm, or the Docker frontend container)
+    cmds:
+      - task: _frontend:npm
+        vars: { NPM_ARGS: run build }
+
+  frontend:lint:
+    desc: Lint frontend code (host npm, or the Docker frontend container)
+    cmds:
+      - task: _frontend:npm
+        vars: { NPM_ARGS: run lint }
+
+  frontend:test:
+    desc: Run frontend tests (host npm, or the Docker frontend container)
+    cmds:
+      - task: _frontend:npm
+        vars: { NPM_ARGS: run test }
+
+  frontend:install:
+    desc: Install frontend dependencies (host npm, or the Docker frontend container)
+    cmds:
+      - task: _frontend:npm
+        vars: { NPM_ARGS: install }
+
+  # === Build & Deploy ===
+
+  build:
+    desc: Rebuild all Docker images (development)
+    cmds:
+      - docker compose -f docker-compose.dev.yml build --no-cache
+
+  build:prod:
+    desc: Build production image (consolidated frontend + backend)
+    cmds:
+      - docker compose -f docker-compose.prod.yml build --no-cache
+
+  build:backend:
+    desc: Rebuild backend Docker image (development)
+    cmds:
+      - docker compose -f docker-compose.dev.yml build --no-cache backend
+
+  # === Monitoring ===
+
+  stats:
+    desc: Show resource usage for containers
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} stats
+
+  # === Utility ===
+
+  help:
+    desc: Show all available tasks
+    cmds:
+      - task --list

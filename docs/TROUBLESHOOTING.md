@@ -1,0 +1,144 @@
+# Troubleshooting
+
+Common problems and their fixes. For configuration reference see
+[CONFIGURATION.md](CONFIGURATION.md) and [`config.sample.yml`](../config.sample.yml).
+
+## Installation and updates
+
+**Pulling the image fails with `denied` or `manifest unknown`.** Either that release isn't published
+yet, the tag in `YTDL_HOARDER_TAG` doesn't exist, or the machine can't reach `ghcr.io` (offline,
+proxy, DNS). Check the [releases page](https://github.com/kkuhlmann/ytdl-hoarder/releases) for a tag
+that exists, or build from source with `docker compose -f docker-compose.prod.yml up -d --build`.
+
+**The app doesn't update itself.** This is deliberate. `latest` is resolved when you pull, not on
+every restart, so a reboot never swaps the running version. Run `task update` to move to a newer
+release. The consequence is that an install left alone for months runs months-old yt-dlp, which is
+the usual cause of downloads breaking.
+
+**Stopping takes several minutes.** `docker compose down` waits up to 6 minutes for the backend so
+an in-flight download can finish rather than being truncated. It exits as soon as the work is done;
+only a mid-download stop takes the full wait.
+
+**The backend won't start and the log says `auth.secret_key is still the sample value`.** The sample
+key is published in this repository, so leaving it in place would allow anyone to forge an
+administrator token. Set a real value in `config.yml` under `auth.secret_key` and restart. Generate
+one with `python -c "import secrets; print(secrets.token_hex(32))"`. `setup.sh` does this
+automatically.
+
+## Downloads
+
+**YouTube rate limiting or empty downloads.** If files come back empty, update the image to get a
+newer yt-dlp. This resolves the problem far more often than any setting change. On the published
+release run `task update` (or `docker compose -f docker-compose.published.yml pull &&
+docker compose -f docker-compose.published.yml up -d`); if you build from source, rebuild with
+`task prod`. If downloads are being blocked rather than returning empty, raise **Request Sleep** to
+1–2 seconds and, if that is insufficient, increase **Download Sleep** or set a **Speed Limit** in the
+Settings tab. Adjusting the yt-dlp player-client order is a last resort, not a first step.
+
+**Repeated HTTP 403 errors on YouTube downloads.** Check the cookie path first. The fastest test is
+to set **Cookies mode** to `NEVER` in Settings and retry. If the 403s stop, the cookie session is the
+problem rather than yt-dlp or the player clients:
+
+- Re-export cookies from a private/incognito window, then close it *without logging out*. Cookies
+  exported from a window you keep using are rotated out from under the app.
+- Check the player clients under Settings. If the list contains `web_creator` (YouTube Studio) or
+  `ios`, remove them — neither is appropriate for this workload. "Reset to defaults" clears them.
+
+**Stuck or orphaned tasks.** Task state lives entirely in PostgreSQL, so queued or interrupted tasks
+resume automatically after a restart. For a clean slate, cancel pending tasks from the Tasks tab, set
+`tasks.purge_on_startup: true` in `config.yml`, or run `task clean` for a full reset (deletes the
+database and restarts fresh).
+
+**"A cancelled download for this video still holds its place in the queue."** Cancelling a download
+keeps that video from being re-queued, so subscriptions do not resurrect dismissed work. Submitting
+the URL again therefore starts nothing. Retry the cancelled task from the Tasks tab, or delete it
+there and submit again.
+
+**Memory pressure during transcription.** Use a smaller Whisper model in `config.yml`
+(`transcription.whisper_model: tiny.en`). Downloads and transcriptions each run one at a time by
+default, and transcription runs in a short-lived child process whose memory is fully reclaimed after
+each job.
+
+## Accounts and access
+
+**"Too many attempts. Please try again later." on the sign-in page.** Sign-in, registration and
+password recovery are rate limited per client address to protect an exposed instance from
+brute-force attempts. Normal use will not reach the limit — sign-in allows 30 attempts every 5
+minutes, registration and recovery 10 per hour — and the limit clears as the window passes; the
+`Retry-After` header on the response states when. If every user is blocked at once, the instance is
+almost certainly behind a reverse proxy: uvicorn only trusts `X-Forwarded-For` from `127.0.0.1` by
+default, so every visitor appears to be the proxy and shares one budget. Set `FORWARDED_ALLOW_IPS`
+in `.env` to the proxy's address and restart.
+
+**Locked out of the only admin account.** Use *Admin account recovery* on the sign-in page, which
+writes a single-use code to `data/admin-recovery.txt` on the server, or run
+`task admin:reset-password -- <username>` with shell access. See [Password recovery](#password-recovery)
+below.
+
+**Can't reach PostgreSQL from another machine.** The database port is published on `127.0.0.1` only,
+since it ships with hardcoded credentials. Host tools on the Docker machine work normally; to reach
+it from elsewhere, tunnel over SSH rather than republishing the port.
+
+## Dev mode networking
+
+These apply only to dev mode (`docker-compose.dev.yml`). The published and prod modes serve the UI
+and API from the same origin and are unaffected.
+
+**Setup/login page doesn't appear when opening the UI from another device.** The frontend is trying
+to reach the API at whatever `NEXT_PUBLIC_BACKEND_API` was baked in at build time — by default
+`http://localhost:8000`, which only resolves on the machine running Docker. Every API call, including
+the check for whether setup is needed, fails silently and the login page is shown instead of the
+setup page. Set `NEXT_PUBLIC_BACKEND_API` in `.env` to an address the browser can reach and rebuild
+the frontend (see [CONFIGURATION.md](CONFIGURATION.md)), or switch to
+`docker compose -f docker-compose.published.yml up -d`.
+
+**Requests fail with a CORS error after opening the UI from another device.** Dev mode serves the UI
+on port 3000 and the API on port 8000, so every call is cross-origin, and only origins listed in
+`auth.allowed_origins` (`config.yml`) may send credentials. Add the address you browse to, including
+the port — for example `http://192.168.1.50:3000` — and restart the backend.
+
+**Hot reload stops working after opening the dev UI from another device.** Next.js 16 blocks
+cross-origin requests to dev resources and HMR unless the host is in the allowed list, so the page
+loads normally and simply never picks up edits. Set `NEXT_PUBLIC_BACKEND_API` in `.env` to the
+address you browse to and rebuild the frontend — the allowed list is derived from it. If the UI and
+API are on different hostnames, add the extras to `ALLOWED_DEV_ORIGINS` (comma-separated).
+
+## Password recovery
+
+There is no email server involved, so recovery is trust-based or filesystem-based.
+
+### A regular user forgot their password
+
+The user clicks *Forgot your password?* on the sign-in page and enters their username. The request
+appears for admins under **Settings → User Management**, where *Reset* generates a temporary
+password. It is displayed once, with a copy button; deliver it to the user through whatever channel
+you normally use. The user is required to choose their own password the first time they sign in with
+it, so an admin never ends up holding a working credential for another user's account.
+
+Any user can change their own password at any time with the key icon in the top right of the
+navigation bar. Changing or resetting a password signs that account out on every other device.
+
+### An admin forgot their password
+
+Recovery requires access to the machine ytdl-hoarder runs on; that requirement stands in for an email
+inbox. Click *Admin account recovery* on the sign-in page and enter the admin username. A single-use
+code is written to `data/admin-recovery.txt` inside the install directory:
+
+```
+  user:    admin
+  code:    K7QM-3XR9-P2WD
+  expires: 2026-07-26 19:14:22 UTC
+```
+
+Read that file off the server, enter the code, and choose a new password. The code expires in 15
+minutes, works once, and the file is deleted as soon as it is used. Nothing about the account changes
+until the code is submitted, so triggering recovery cannot lock out the admin.
+
+If it reports a permission error writing the file, the `data/` directory is not writable by the
+container. On Linux: `sudo chown 1000:1000 data/`.
+
+With shell access the file step can be skipped entirely:
+
+```bash
+task admin:reset-password -- <username>
+```

@@ -1,0 +1,78 @@
+# Development configuration
+# Usage: docker compose -f docker-compose.dev.yml up
+#
+# Features:
+# - Separate frontend and backend containers
+# - Hot reload via volume mounts
+# - Frontend on :3000, Backend on :8000
+#
+# Shared postgres/backend definitions live in docker-compose.common.yml; only the
+# dev-specific deltas are below.
+#
+# Media storage paths (set in .env; default to ./data/media/* if unset):
+#   AUDIO_ONLY_PATH=/path/to/your/audio
+#   VIDEO_PATH=/path/to/your/video
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.common.yml
+      service: postgres
+
+  backend:
+    extends:
+      file: docker-compose.common.yml
+      service: backend-common
+    image: ytdl-hoarder:backend-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: worker
+    healthcheck:
+      start_period: 30s
+    # extends does not carry depends_on — it has to be declared here.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app
+      - ./backend/pyproject.toml:/etc/app/pyproject.toml:ro
+      - ./backend/alembic.ini:/alembic/alembic.ini:ro
+      - ./backend/migrations:/alembic/migrations:ro
+    command: >
+      sh -c "
+        alembic -c /alembic/alembic.ini upgrade head &&
+        uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  frontend:
+    build:
+      context: frontend/.
+      args:
+        NEXT_PUBLIC_BACKEND_API: ${NEXT_PUBLIC_BACKEND_API:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      # No watch-polling knob is set: inotify works across this bind mount on
+      # Linux. If watching is flaky on a non-Linux host (Docker Desktop) or a
+      # networked mount, note that Next 16's dev server runs TWO watchers and
+      # each has its own switch:
+      #   Turbopack, module HMR          -> watchOptions.pollIntervalMs in
+      #                                     frontend/next.config.js
+      #   watchpack, route discovery,    -> WATCHPACK_POLLING=true here
+      #     .env, tsconfig, next.config
+      # Next 16 blocks cross-origin dev/HMR requests. The host from
+      # NEXT_PUBLIC_BACKEND_API is allowed automatically (see next.config.js);
+      # set this only to allow additional hosts, comma-separated.
+      - ALLOWED_DEV_ORIGINS=${ALLOWED_DEV_ORIGINS:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  hf-cache:

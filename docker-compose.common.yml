@@ -1,0 +1,83 @@
+# Shared service definitions pulled in via `extends` from the three runnable
+# files: docker-compose.dev.yml, docker-compose.prod.yml and
+# docker-compose.published.yml. Not runnable on its own — never pass this file to
+# `docker compose -f`.
+#
+# `extends` merges mappings per-key and appends list entries after the base's, so
+# each runnable file adds only its own deltas. It does NOT carry `depends_on` or
+# any top-level key, so those stay declared in the runnable files.
+#
+# The chain is backend-common → backend-prod-common → {prod, published}; the
+# second hop is a same-file `extends`, which resolves against this file rather
+# than whichever file was passed to `-f`.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    shm_size: 256mb
+    ports:
+      # Host-only: the credentials below are hardcoded, so publishing on all
+      # interfaces would expose the database to the LAN.
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ytdl
+      POSTGRES_PASSWORD: ytdl
+      POSTGRES_DB: ytdl_hoarder
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ytdl -d ytdl_hoarder"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend-common:
+    user: "1000:1000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${AUDIO_ONLY_PATH:-./data/media/audio}:/mnt/audio
+      - ${VIDEO_PATH:-./data/media/video}:/mnt/video
+      - ./config.yml:/etc/app/config.yml:ro
+      - ./data:/data
+      - hf-cache:/opt/hf_cache
+    healthcheck:
+      # curl is a build-stage-only dependency; probe with the interpreter instead.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    shm_size: 256M
+    environment:
+      # Which upstream addresses may set X-Forwarded-For. Without the proxy's address
+      # here, every request behind a reverse proxy looks like it comes from the proxy
+      # and shares one auth rate-limit budget.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1}
+
+  # The prod runtime, shared by docker-compose.prod.yml (builds from this
+  # checkout) and docker-compose.published.yml (pulls the released image). Those
+  # two differ only in where the image comes from — drift between them would mean
+  # the stack strangers install boots differently from the one contributors test.
+  backend-prod-common:
+    extends:
+      service: backend-common
+    healthcheck:
+      start_period: 60s
+    # Long enough for an in-flight download to finish on shutdown.
+    stop_grace_period: 6m
+    # Dockerfile.prod sets no CMD and no EXPOSE, so this command and the ports in
+    # backend-common are the only things that make the image runnable — a pulled
+    # image carries nothing of its own to fall back on.
+    command: >
+      sh -c "
+        alembic -c /alembic/alembic.ini upgrade head &&
+        exec /opt/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+      "

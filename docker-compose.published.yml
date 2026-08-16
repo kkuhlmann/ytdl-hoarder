@@ -1,0 +1,42 @@
+# Published-release configuration: runs the prebuilt multi-arch image from GHCR,
+# so there is nothing to compile.
+#   docker compose -f docker-compose.published.yml up -d     # start
+#   docker compose -f docker-compose.published.yml pull      # update
+#
+# Deliberately has NO `build:` block. With one, a failed or forgotten pull would
+# silently start a 45-minute local build instead of reporting that the image is
+# unavailable — and it would build the working tree, not the released commit.
+# Build from source with docker-compose.prod.yml instead.
+#
+# Pin a release with YTDL_HOARDER_TAG in .env (e.g. v0.1.0); the default `latest`
+# follows the newest release. YTDL_HOARDER_IMAGE only needs changing for a fork
+# or a registry mirror. The defaults are repeated below so an .env written before
+# these variables existed still resolves.
+#
+# The shared prod runtime (command, healthcheck, stop_grace_period) lives in
+# docker-compose.common.yml's backend-prod-common — the same one prod uses, so
+# the released stack cannot drift from the one contributors test.
+#
+# Media storage paths (set in .env; default to ./data/media/* if unset):
+#   AUDIO_ONLY_PATH=/path/to/your/audio
+#   VIDEO_PATH=/path/to/your/video
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.common.yml
+      service: postgres
+
+  backend:
+    extends:
+      file: docker-compose.common.yml
+      service: backend-prod-common
+    image: ${YTDL_HOARDER_IMAGE:-ghcr.io/kkuhlmann/ytdl-hoarder}:${YTDL_HOARDER_TAG:-latest}
+    # extends does not carry depends_on — it has to be declared here.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  hf-cache:

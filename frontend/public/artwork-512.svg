@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" shape-rendering="crispEdges">
+  <defs>
+    <linearGradient id="s" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00ff41" stop-opacity="0.35"/>
+      <stop offset="14%" stop-color="#00ff41" stop-opacity="0.35"/>
+      <stop offset="14%" stop-color="#00ff41" stop-opacity="0.28"/>
+      <stop offset="28%" stop-color="#00ff41" stop-opacity="0.28"/>
+      <stop offset="28%" stop-color="#00ff41" stop-opacity="0.20"/>
+      <stop offset="42%" stop-color="#00ff41" stop-opacity="0.20"/>
+      <stop offset="42%" stop-color="#00ff41" stop-opacity="0.13"/>
+      <stop offset="56%" stop-color="#00ff41" stop-opacity="0.13"/>
+      <stop offset="56%" stop-color="#00ff41" stop-opacity="0.07"/>
+      <stop offset="70%" stop-color="#00ff41" stop-opacity="0.07"/>
+      <stop offset="70%" stop-color="#00ff41" stop-opacity="0.03"/>
+      <stop offset="85%" stop-color="#00ff41" stop-opacity="0.03"/>
+      <stop offset="85%" stop-color="#00ff41" stop-opacity="0.0"/>
+      <stop offset="100%" stop-color="#00ff41" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" fill="#0a0a0a"/>
+
+  <!-- Left monitor -->
+  <polygon points="32,208 160,224 160,304 32,320" fill="#161b22" stroke="#00b32d" stroke-width="4"/>
+  <polygon points="48,224 144,236 144,292 48,304" fill="#0a0a0a"/>
+  <polygon points="48,224 144,236 144,292 48,304" fill="url(#s)"/>
+
+  <!-- Center monitor -->
+  <rect x="176" y="160" width="160" height="144" fill="#161b22" stroke="#00ff41" stroke-width="4"/>
+  <rect x="192" y="176" width="128" height="112" fill="#0a0a0a"/>
+  <rect x="192" y="176" width="128" height="112" fill="url(#s)"/>
+
+  <!-- Right monitor -->
+  <polygon points="352,224 480,208 480,320 352,304" fill="#161b22" stroke="#00b32d" stroke-width="4"/>
+  <polygon points="368,236 464,224 464,304 368,292" fill="#0a0a0a"/>
+  <polygon points="368,236 464,224 464,304 368,292" fill="url(#s)"/>
+</svg>

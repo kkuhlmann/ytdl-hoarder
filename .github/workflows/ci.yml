@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Neither job needs write access or secrets. Least privilege also keeps
+# Dependabot PRs (which get a read-only token) working unchanged.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Matches frontend/Dockerfile and Dockerfile.prod's frontend-builder,
+          # both node:24-alpine.
+          node-version: "24"
+
+      - run: npm ci
+
+      # tsconfig has noUnusedLocals + noUnusedParameters on, so an unused local
+      # is a build failure here, not editor noise.
+      - run: npx tsc --noEmit -p tsconfig.json
+
+      # Must be 0 errors. The ~78 react-hooks warnings are the known baseline --
+      # the React Compiler rule set is held at "warn" in eslint.config.mjs. Do
+      # NOT add --max-warnings; working those down is tracked separately.
+      - run: npm run lint
+
+      - run: npm test
+
+      - run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      # tests/test_peaks.py synthesises a real tone and decodes it, so it needs
+      # the actual ffmpeg/ffprobe binaries. Not preinstalled on ubuntu runners.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - uses: astral-sh/setup-uv@v7
+
+      # Provisions CPython per backend/.python-version (3.14).
+      # --locked fails the build on a stale lockfile instead of re-resolving.
+      - run: uv sync --locked
+
+      - run: uv run ruff check .
+
+      - run: uv run ruff format --check .
+
+      # testcontainers starts postgres:16-alpine against the runner's Docker daemon.
+      - run: uv run pytest

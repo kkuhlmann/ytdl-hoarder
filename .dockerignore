@@ -1,0 +1,35 @@
+# Dockerfile.prod builds both the prod and dev images from the repo root, so this
+# is the only ignore file either build reads. backend/.venv alone is ~580MB, so
+# an omission here is felt on every build.
+
+# Frontend build artifacts (macOS-specific, must not overwrite Linux deps)
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# Backend build artifacts
+backend/.venv
+backend/.ruff_cache
+backend/.pytest_cache
+backend/tests
+**/__pycache__
+*.pyc
+
+# Runtime state - grows without bound and must never reach a build context
+data/
+
+# Secrets. `.env.*` is root-anchored and so missed frontend/.env.local, which
+# `COPY frontend/ ./` (Dockerfile.prod, frontend-builder) would sweep into the
+# build context. config.yml carries auth.secret_key.
+**/.env*
+!.env.sample
+config.yml*
+
+# IDE, VCS, misc
+.git
+.github
+.claude
+.vscode
+docs
+script
+*.md

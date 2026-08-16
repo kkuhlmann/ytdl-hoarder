@@ -1,0 +1,88 @@
+# ytdl-hoarder Configuration
+#
+# Copy this file to config.yml and customize as needed. This is the single
+# source of application settings; .env is Docker Compose's variable file and is
+# never read by the app.
+#
+# Configuration priority (highest to lowest):
+# 1. config.yml
+# 2. Environment variables, in double underscore notation (DATABASE__URL,
+#    TASKS__PURGE_ON_STARTUP). These apply only to keys config.yml
+#    leaves unset — a key present here always wins.
+# 3. Default values
+#
+# Under Docker only FORWARDED_ALLOW_IPS reaches the container, so the env-var
+# layer is a bare-metal concern; in a container, set things here.
+
+# PostgreSQL database connection
+database:
+  url: postgresql://ytdl:ytdl@postgres:5432/ytdl_hoarder
+
+# Media storage paths *inside* the container. Leave these alone — they are the
+# targets the compose files bind-mount onto, so pointing them somewhere else
+# makes the app write to an unmounted path that vanishes with the container.
+# To choose where media lands on your disk, set AUDIO_ONLY_PATH / VIDEO_PATH
+# in .env instead.
+storage:
+  audio_path: /mnt/audio
+  video_path: /mnt/video
+
+# Background task orchestrator configuration
+# How often subscriptions are checked and how many jobs each lane runs at once
+# are not set here: both live in the Settings tab (Tasks), so they can be
+# changed without a restart.
+tasks:
+  # Cancel all pending tasks on startup instead of resuming them
+  # - true: Good for development (clean slate on restart)
+  # - false: Production setting (queued/interrupted work resumes after restart)
+  purge_on_startup: false
+
+# Whisper transcription settings
+transcription:
+  # Model size: tiny.en, small.en, medium.en, large
+  # Larger models are more accurate but use more memory
+  whisper_model: tiny.en
+
+  # CPU threads for Whisper inference
+  # Defaults to (available CPUs - 1) when unset; uncomment to pin a fixed value
+  # whisper_cpu_threads: 4
+
+  # Number of Whisper worker processes
+  whisper_num_workers: 1
+
+# Sentence embedding for semantic search
+embedding:
+  # Embeddings run on onnxruntime. all-MiniLM-L6-v2 is currently the only
+  # supported model — any other value fails at startup. Switching models would
+  # invalidate every embedding already stored, since vectors are not comparable
+  # across models.
+  model: all-MiniLM-L6-v2
+
+# Authentication
+auth:
+  # Secret key for JWT signing. The app REFUSES TO START while this is left at
+  # the sample value below — it is published in this repo, so leaving it would
+  # let anyone forge an admin token.
+  # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+  secret_key: change-me-in-production
+
+  # JWT token expiry in days
+  jwt_expiry_days: 30
+
+  # JWT signing algorithm
+  algorithm: HS256
+
+  # Send the auth cookie only over HTTPS. Defaults to false so plain-HTTP
+  # self-hosts keep working; turn it on if you terminate TLS in front of the app.
+  cookie_secure: false
+
+  # Origins allowed to make credentialed cross-origin API calls.
+  # Dev mode only — the production image serves the frontend same-origin.
+  # Add your LAN IP or domain here if you open the dev UI from another device.
+  allowed_origins:
+    - http://localhost:3000
+
+# Logging configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  level: INFO

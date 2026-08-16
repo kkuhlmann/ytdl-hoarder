@@ -1,0 +1,42 @@
+# Production configuration, built from this checkout.
+# Usage: docker compose -f docker-compose.prod.yml up -d --build
+#
+# For the prebuilt multi-arch release image — same runtime, no local build — use
+# docker-compose.published.yml instead.
+#
+# Features:
+# - Single container serves both API and frontend
+# - Frontend built into backend container
+# - No volume mounts for source code (immutable image)
+# - All on port :8000
+#
+# The shared prod runtime (command, healthcheck, stop_grace_period) lives in
+# docker-compose.common.yml's backend-prod-common; only the deltas are below.
+#
+# Media storage paths (set in .env; default to ./data/media/* if unset):
+#   AUDIO_ONLY_PATH=/path/to/your/audio
+#   VIDEO_PATH=/path/to/your/video
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.common.yml
+      service: postgres
+
+  backend:
+    extends:
+      file: docker-compose.common.yml
+      service: backend-prod-common
+    image: ytdl-hoarder:production
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: production
+    # extends does not carry depends_on — it has to be declared here.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  hf-cache:

@@ -1,0 +1,174 @@
+[project]
+name = "ytdl-hoarder-backend"
+version = "0.1.0"
+description = "Backend API with in-process task orchestrator"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "AGPL-3.0-only"
+dependencies = [
+    "aiofiles>=25.1.0",
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "cachetools>=7.1.6",
+    "fastapi>=0.141.1",
+    "faster-whisper>=1.2.1",
+    "huggingface-hub>=1.27.0",
+    "numpy>=2.5.1",
+    "onnxruntime>=1.28.0",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+    "pyyaml>=6.0.3",
+    "sqlmodel>=0.0.39",
+    "tokenizers>=0.23.1",
+    "bcrypt>=5.0.0",
+    "PyJWT>=2.13.0",
+    "uvicorn>=0.52.3",
+    "yt-dlp[default,curl-cffi]>=2026.7.4",
+    "python-multipart>=0.0.32",
+]
+[tool.ruff]
+line-length = 100
+# `app/` is the import root at runtime (pytest.ini `pythonpath=app`, and the
+# prod image copies app/ to the workdir), so `models`, `database`, `logger`
+# etc. are first-party despite being top-level module names.
+src = [".", "app"]
+# Held one release behind requires-python on purpose. At py314 the formatter
+# applies PEP 758 and strips the parens from `except (A, B):`, which is valid
+# but reads like a Python 2 syntax error. Raise this only when that rewrite is
+# wanted repo-wide.
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E4", "E7", "E9", "F",        # syntax errors, pyflakes
+    "B",                          # flake8-bugbear: real bug patterns
+    "SIM", "C4", "RET", "PIE",    # simplification / comprehensions / early-return smells
+    "RUF",                        # ruff-specific correctness/style
+    "UP",                         # pyupgrade
+    "T20",                        # stray print()
+    "PERF", "FURB",               # perf and modernization
+    "G",                          # logging format strings
+    "RSE", "ERA",                 # raise-paren cleanup, commented-out code
+    "BLE",                        # blind except
+    "ARG",                        # unused function/method arguments
+    "I",                          # import sorting
+    "N",                          # pep8-naming
+    "C90",                        # cyclomatic complexity
+    "S",                          # bandit security heuristics
+    "TRY",                        # exception-raising style
+    "SLF",                        # private member access from outside class
+    "ASYNC",                      # blocking calls inside async def
+    "EM",                         # exception message construction
+    "A",                          # builtin shadowing
+    "INP",                        # implicit namespace packages
+]
+# Deliberately excluded: Q and COM812 (fight the single-quote/formatter config
+# in [tool.ruff.format] below), D and ANN (docstrings/type-annotations — would
+# require authoring ~3,200 pieces of new content, not a lint fix), FBT and PTH
+# (call-site-wide refactors), PL (PLR2004/PLC0415 are noisy here), FAST (preview
+# rule, requires --preview), CPY (copyright-header policy, not lint).
+#
+# DTZ is excluded for a codebase-specific reason: datetimes here are naive UTC
+# by design, because the Postgres columns are TIMESTAMP WITHOUT TIME ZONE and
+# asyncpg rejects aware datetimes for them (see `utc_now()` in models.py). DTZ
+# would flag that convention everywhere it is honored and push edits that break
+# the DB layer.
+
+ignore = [
+    # `class X(str, Enum)` -> `StrEnum` is not behavior-preserving: it changes
+    # `str(X.A)` from 'X.A' to the member value, which these enums cannot absorb
+    # because they are SQLModel column types that also get interpolated into
+    # f-strings and log lines. Migrating them is a data-format decision, not lint.
+    "UP042",
+    # f-string logging is this project's house style in all 258 call sites. The
+    # rule's payoff is deferring formatting until a record is actually emitted;
+    # converting every site to %-style by hand is a much larger change than the
+    # benefit warrants. The rest of the G rules stay on and do apply project-wide,
+    # via `logger-objects` below.
+    "G004",
+    # Every subprocess call in this codebase passes an argument *list* and never
+    # shell=True, which is the thing that actually matters — and that is enforced
+    # separately by S602/S604/S605, which stay on. What is left for S603/S607 to
+    # flag is "you invoked ffmpeg/ffprobe by name", which is deliberate: the
+    # binary's location differs between the container and a host dev machine.
+    "S603",
+    "S607",
+    # Suggests trio.Path/anyio.Path, neither of which this asyncio app uses
+    # directly. The flagged calls are all single `stat` syscalls (exists/getsize/
+    # splitext) whose cost is far below the thread hop the fix would add. The
+    # ASYNC rules that catch genuinely blocking I/O (ASYNC230 and the 1xx group)
+    # stay on.
+    "ASYNC240",
+]
+
+# `×` is used as a multiplication sign in log lines and docstrings ("user × media"),
+# which is what it is for; RUF001/RUF002 read it as a confusable for `x`.
+allowed-confusables = ["×"]
+
+# Most of the app logs through `from logger import logger`, which ruff otherwise
+# does not recognize as a logger at all — without this the G rules would apply
+# only to the two modules that happen to use `logging.getLogger()` directly.
+logger-objects = ["logger.logger"]
+
+[tool.ruff.lint.mccabe]
+# Above ruff's default of 10. The repositories' query builders take a dozen
+# independent optional filters each, so their branch count tracks the number of
+# supported filters; splitting them scatters the complexity across helpers
+# rather than reducing it. 12 still catches genuinely sprawling functions --
+# the ones already above it carry a scoped noqa explaining why.
+max-complexity = 12
+
+[tool.ruff.lint.flake8-bugbear]
+# Calling these in a parameter default is exactly how FastAPI declares
+# dependencies and request bodies; B008's "mutable default" hazard doesn't apply.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Form",
+]
+
+[tool.ruff.lint.flake8-builtins]
+# `id` is the FastAPI path-parameter name across every `/{id}` route and the
+# matching repository accessors. Renaming it is a call-site-wide refactor with
+# no safety benefit; other shadowed builtins stay flagged.
+builtins-ignorelist = ["id"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic migration dir isn't a package. Its S608 hits interpolate only
+# module-level constants defined in the same file — no runtime input reaches them.
+"migrations/**" = ["INP001", "S608"]
+# Standalone CLI/build scripts: stdout is their user interface, and the fetch
+# in ffmpeg_download.py targets a hardcoded release URL (S310).
+"app/scripts/**" = ["T201", "INP001"]
+"docker_assets/**" = ["T201", "INP001", "S310"]
+# Test-suite idioms, legitimate by construction rather than violations:
+# bare `assert` is how pytest asserts; stub/fake callables and fixtures must
+# match the signature they stand in for even when they ignore an argument;
+# tests reach into private attributes to assert on internal state; and fixture
+# passwords/`/tmp` paths are dummy values, not credentials or real filesystem use.
+"tests/**" = ["S101", "S105", "S106", "S108", "ARG001", "ARG002", "ARG005", "SLF001"]
+# Every method here implements one fixed lifecycle-callback signature that
+# wrapper.py invokes positionally, so each must accept the full argument list
+# even when it ignores most of it. Renaming ~29 params to `_kwargs`/`_einfo`
+# would cost the names' documentation value and buy nothing.
+"app/orchestrator/hooks.py" = ["ARG002"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+docstring-code-format = true
+
+[dependency-groups]
+dev = [
+    "greenlet>=3.5.4",
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-mock>=3.15.1",
+    "ruff>=0.16.3",
+    "testcontainers[postgres]>=4.15.0",
+]

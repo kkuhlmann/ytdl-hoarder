@@ -1,0 +1,131 @@
+name: Pinned release check
+
+# DENO_VERSION and BGUTIL_POT_VERSION are fetched by curl inside a RUN, which no
+# Dependabot ecosystem can see -- its `docker` manager only parses FROM and
+# COPY --from. Without this job nothing reports an upstream release for either pin.
+on:
+  schedule:
+    # Mondays, matching .github/dependabot.yml's cadence.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+# ci.yml runs read-only on purpose. The entire write surface here is two calls:
+# `git push origin <branch>` and `gh pr create`. Review and merge stay human --
+# do not add `gh pr review` or `gh pr merge` to this workflow.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arg: DENO_VERSION
+            repo: denoland/deno
+            assets: >-
+              deno-x86_64-unknown-linux-gnu.zip
+              deno-aarch64-unknown-linux-gnu.zip
+          - arg: BGUTIL_POT_VERSION
+            repo: jim60105/bgutil-ytdlp-pot-provider-rs
+            assets: >-
+              bgutil-pot-linux-x86_64
+              bgutil-pot-linux-aarch64
+              bgutil-ytdlp-pot-provider-rs.zip
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the pin against the latest release
+        id: compare
+        env:
+          ARG_NAME: ${{ matrix.arg }}
+          REPO: ${{ matrix.repo }}
+          REQUIRED_ASSETS: ${{ matrix.assets }}
+        run: |
+          set -euo pipefail
+
+          current="$(sed -n "s/^ARG ${ARG_NAME}=\(.*\)/\1/p" Dockerfile.prod)"
+          if [ -z "$current" ]; then
+            echo "::error::no 'ARG ${ARG_NAME}=' line in Dockerfile.prod"
+            exit 1
+          fi
+
+          # /releases/latest already excludes drafts and prereleases.
+          release="$(curl -fsSL -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${REPO}/releases/latest")"
+          latest="$(printf '%s' "$release" | jq -r '.tag_name')"
+
+          echo "${ARG_NAME}: pinned=${current} latest=${latest}"
+          {
+            echo "current=${current}"
+            echo "latest=${latest}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$current" = "$latest" ]; then
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # An upstream asset rename would produce a PR whose only effect is breaking the
+          # release build, so confirm every URL Dockerfile.prod constructs still exists.
+          for asset in $REQUIRED_ASSETS; do
+            if ! printf '%s' "$release" \
+                 | jq -e --arg a "$asset" '.assets[] | select(.name == $a)' >/dev/null; then
+              echo "::warning::${latest} has no asset ${asset} -- needs a Dockerfile change, not a version bump"
+              echo "bump=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open the bump PR
+        if: steps.compare.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARG_NAME: ${{ matrix.arg }}
+          REPO: ${{ matrix.repo }}
+          CURRENT: ${{ steps.compare.outputs.current }}
+          LATEST: ${{ steps.compare.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          branch="pin/$(printf '%s' "${ARG_NAME,,}" | tr '_' '-')-${LATEST}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "$branch already exists -- nothing to do"
+            exit 0
+          fi
+
+          git switch -c "$branch"
+
+          # Anchored on '=' so the bare re-declaration in the builder stage
+          # (ARG DENO_VERSION, no value) keeps inheriting rather than being overwritten.
+          sed -i "s|^ARG ${ARG_NAME}=.*|ARG ${ARG_NAME}=${LATEST}|" Dockerfile.prod
+          if git diff --quiet Dockerfile.prod; then
+            echo "::error::sed matched nothing in Dockerfile.prod"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: bump ${ARG_NAME} to ${LATEST}"
+          git push origin "$branch"
+
+          printf '%s\n' \
+            "\`${ARG_NAME}\` ${CURRENT} -> ${LATEST} ([release notes](https://github.com/${REPO}/releases/tag/${LATEST}))." \
+            "" \
+            "All release assets \`Dockerfile.prod\` fetches were confirmed present at this tag." \
+            "" \
+            "**Nothing here has been built.** ci.yml does not build the image, and a PR opened" \
+            "with \`GITHUB_TOKEN\` does not trigger workflows. Verify before merging:" \
+            "" \
+            '```' \
+            "docker build -f Dockerfile.prod --target builder ." \
+            '```' \
+            > "$RUNNER_TEMP/pr-body.md"
+
+          gh pr create --base main --head "$branch" \
+            --title "chore: bump ${ARG_NAME} to ${LATEST}" \
+            --body-file "$RUNNER_TEMP/pr-body.md"

@@ -1,0 +1,33 @@
+.idea
+/VIDEO
+/video
+/MUSIC
+/AUDIO_PODCAST
+/AUDIO
+# Secrets. config.yml holds auth.secret_key, and `setup.sh --overwrite` writes
+# .env.bak / config.yml.bak beside them — so the .bak forms must be covered or a
+# later `git add -A` commits the JWT signing key.
+# config.sample.yml does not match config.yml* and stays tracked.
+.env*
+!.env.sample
+config.yml*
+*.bak
+.claude/settings.local.json
+
+__pycache__*
+# Runtime data: cookies.txt, admin-recovery.txt, backgrounds, DB backups, and the
+# default media roots. The contents are ignored but the directory skeleton is
+# tracked — Docker creates a missing bind-mount source as root:root while the
+# container runs as uid 1000, so every write under /data then fails.
+# Note the `!/data/**/` line: git cannot re-include a file whose parent directory
+# is still excluded, so the directories must be un-excluded before the .gitkeeps.
+/data/**
+!/data/**/
+!/data/**/.gitkeep
+.pytest_cache
+.venv
+node_modules
+.ipynb_checkpoints
+.next
+.DS_Store
+.ruff_cache

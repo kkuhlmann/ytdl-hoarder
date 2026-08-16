@@ -1,0 +1,189 @@
+# syntax=docker/dockerfile:1
+# The backend Dockerfile, with two targets built from the same base/ffmpeg/builder
+# stages. Both build from the project root:
+#   --target production  consolidated frontend + backend image (docker-compose.prod.yml)
+#   --target worker      backend only, source bind-mounted over /app (docker-compose.dev.yml)
+# e.g. docker build -f Dockerfile.prod --target production -t ytdl-hoarder:production .
+ARG PYTHON_IMAGE=python:3.14-slim-trixie
+ARG UV_VERSION=0.11.31
+# Deno powers yt-dlp's JS challenge solving; too old -> "Signature solving failed".
+ARG DENO_VERSION=v2.9.0
+# The PO token provider yt-dlp calls for YouTube WebPO tokens. Pinned like every other
+# version here: `latest` makes a rebuild non-reproducible, and layer caching would pin
+# an old binary anyway since the RUN string never changes.
+ARG BGUTIL_POT_VERSION=v0.8.1
+
+# Version-pinned scratch image; uv sits at the root there, not in /usr/local/bin.
+# Pulled in as a stage rather than a bare `COPY --from=ghcr.io/...:${UV_VERSION}`
+# because BuildKit does not expand variables in --from image references, only in FROM.
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
+
+# ============================================================
+# Base stage - runtime foundation, shared by builder and production
+# ============================================================
+FROM ${PYTHON_IMAGE} AS base
+
+ARG UID=1000
+ARG GID=1000
+ARG USER_NAME=apprunner
+
+RUN groupadd -g $GID $USER_NAME && \
+    useradd -m -u $UID -g $GID $USER_NAME
+
+RUN mkdir -p /mnt/audio /mnt/video /opt/venv /data /alembic && \
+    chown -R $UID:$GID /mnt/audio /mnt/video /opt/venv /data /alembic
+
+
+# ============================================================
+# FFmpeg builder stage
+# ============================================================
+FROM ${PYTHON_IMAGE} AS ffmpeg-builder
+
+ARG TARGETPLATFORM
+
+COPY backend/docker_assets/ffmpeg_download.py ffmpeg_download.py
+RUN python ffmpeg_download.py $TARGETPLATFORM
+
+
+# ============================================================
+# Builder stage - everything needing curl/unzip/uv, none of which
+# reaches the production stage
+# ============================================================
+FROM base AS builder
+
+ARG UID=1000
+ARG GID=1000
+ARG TARGETARCH
+ARG DENO_VERSION
+ARG BGUTIL_POT_VERSION
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv-bin /uv /usr/local/bin/uv
+
+ENV UV_LINK_MODE=copy
+
+# Install deno for yt-dlp JavaScript extraction
+RUN case "$TARGETARCH" in \
+        amd64) DENO_ARCH="x86_64-unknown-linux-gnu" ;; \
+        arm64) DENO_ARCH="aarch64-unknown-linux-gnu" ;; \
+        *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL -L "https://github.com/denoland/deno/releases/download/${DENO_VERSION}/deno-${DENO_ARCH}.zip" -o /tmp/deno.zip && \
+    unzip /tmp/deno.zip -d /usr/local/bin && \
+    chmod +x /usr/local/bin/deno && \
+    rm /tmp/deno.zip
+
+WORKDIR /app
+COPY backend/uv.lock backend/pyproject.toml /app/
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    uv sync --locked --no-install-project --no-dev
+
+# Install PO token provider for yt-dlp (script mode)
+# Generates Proof-of-Origin tokens to bypass YouTube bot detection
+RUN case "$TARGETARCH" in \
+        amd64) BGUTIL_SUFFIX="x86_64" ;; \
+        arm64) BGUTIL_SUFFIX="aarch64" ;; \
+        *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs/releases/download/${BGUTIL_POT_VERSION}/bgutil-pot-linux-${BGUTIL_SUFFIX}" \
+        -o /usr/local/bin/bgutil-pot && \
+    chmod +x /usr/local/bin/bgutil-pot && \
+    curl -fsSL "https://github.com/jim60105/bgutil-ytdlp-pot-provider-rs/releases/download/${BGUTIL_POT_VERSION}/bgutil-ytdlp-pot-provider-rs.zip" \
+        -o /tmp/pot-plugin.zip && \
+    SITE_PACKAGES="$(/opt/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" && \
+    unzip /tmp/pot-plugin.zip -d "$SITE_PACKAGES/" && \
+    rm /tmp/pot-plugin.zip
+
+COPY backend/docker_assets/prune_venv.sh /tmp/prune_venv.sh
+RUN sh /tmp/prune_venv.sh /opt/venv && chown -R $UID:$GID /opt/venv
+
+
+# ============================================================
+# Frontend builder stage
+# ============================================================
+# Keep in sync with frontend/Dockerfile so the shipped static export is built
+# by the same Node the dev container runs. 24 is Active LTS.
+#
+# $BUILDPLATFORM, not TARGETPLATFORM: the stage's only output is a Next static
+# export (HTML/JS/CSS, no native binaries), so it is architecture-neutral and
+# safe to copy into either arch's image. Pinning it to the builder's own
+# platform keeps `npm ci` + `next build` out of QEMU on cross-builds, where
+# they would otherwise dominate the multi-arch build time.
+FROM --platform=$BUILDPLATFORM node:25-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+
+# Build with /api prefix for production (same-origin API calls)
+ENV NEXT_PUBLIC_BACKEND_API=/api
+RUN npm run build
+
+
+# ============================================================
+# Production stage - clean image with only runtime artifacts
+# ============================================================
+FROM base AS production
+
+ARG UID=1000
+ARG GID=1000
+ARG USER_NAME=apprunner
+
+ENV HF_HOME=/opt/hf_cache
+RUN mkdir -p $HF_HOME && chown -R $UID:$GID $HF_HOME
+
+WORKDIR /app
+
+COPY --from=ffmpeg-builder ./ffmpeg/ffmpeg /usr/bin/ffmpeg
+COPY --from=ffmpeg-builder ./ffprobe/ffprobe /usr/bin/ffprobe
+COPY --from=builder /usr/local/bin/deno /usr/local/bin/deno
+COPY --from=builder /usr/local/bin/bgutil-pot /usr/local/bin/bgutil-pot
+COPY --from=builder --chown=$UID:$GID /opt/venv /opt/venv
+
+COPY backend/app/ /app/
+COPY backend/pyproject.toml /app/
+COPY backend/alembic.ini /alembic/alembic.ini
+COPY backend/migrations /alembic/migrations
+
+ENV PATH=/opt/venv/bin:$PATH
+
+# Copy frontend static files
+COPY --from=frontend-builder /frontend/out /app/static
+ENV STATIC_FILES_DIR=/app/static
+
+USER $USER_NAME
+
+
+# ============================================================
+# Worker stage - dev image: backend only, source bind-mounted over /app.
+# No frontend and no alembic copy; dev mounts alembic.ini and migrations.
+# ============================================================
+FROM base AS worker
+
+ARG UID=1000
+ARG GID=1000
+ARG USER_NAME=apprunner
+
+# HuggingFace cache for embedding model (downloaded at runtime, persisted via volume)
+ENV HF_HOME=/opt/hf_cache
+RUN mkdir -p $HF_HOME && chown -R $UID:$GID $HF_HOME
+
+COPY --from=ffmpeg-builder ./ffmpeg/ffmpeg /usr/bin/ffmpeg
+COPY --from=ffmpeg-builder ./ffprobe/ffprobe /usr/bin/ffprobe
+COPY --from=builder /usr/local/bin/deno /usr/local/bin/deno
+COPY --from=builder /usr/local/bin/bgutil-pot /usr/local/bin/bgutil-pot
+COPY --from=builder --chown=$UID:$GID /opt/venv /opt/venv
+
+WORKDIR /app
+COPY backend/app/ /app/
+COPY backend/pyproject.toml /app/
+
+ENV PATH=/opt/venv/bin:$PATH
+
+USER $USER_NAME

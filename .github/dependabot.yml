@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # Python backend — uv (pyproject.toml + uv.lock in /backend)
+  - package-ecosystem: "uv"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # Frontend — npm (package.json in /frontend)
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # Docker images at the root — Dockerfile.prod (python, uv, node) and
+  # pgvector/pgvector:pg17 in the compose files.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # The dev frontend image (node:24-alpine) — its own Dockerfile, so the root
+  # entry above does not see it.
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+
+  # Workflow actions — all pinned to major tags; release.yml holds
+  # packages: write, so these must not float unwatched.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"

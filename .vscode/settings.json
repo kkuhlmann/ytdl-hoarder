@@ -1,0 +1,63 @@
+// Editor settings mirroring what CI enforces (.github/workflows/ci.yml).
+// Backend formatting is gated (`ruff format --check`), so Python formats on save.
+// The frontend has no formatter in CI, so TS/TSX deliberately does not — see below.
+{
+    // --- Python: ruff, line-length 100 (backend/pyproject.toml [tool.ruff]) ---
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.rulers": [
+            100
+        ],
+        "editor.codeActionsOnSave": {
+            // `I` is in ruff's lint select list, so unsorted imports fail CI.
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+    // Prefer the ruff pinned in backend/.venv over the extension's bundled build,
+    // so the editor and `uv run ruff` cannot report different results.
+    "ruff.importStrategy": "fromEnvironment",
+
+    // --- TypeScript / React: frontend/.prettierrc (tabWidth 2, no semicolons,
+    // printWidth 100 to match ruff) ---
+    // formatOnSave is off on purpose: prettier is neither a dependency nor a CI
+    // step, and the tree does not currently match it, so formatting on save
+    // rewrites unrelated lines across the file you happened to open. Format
+    // explicitly (Shift+Alt+F) when you want it.
+    "editor.formatOnSave": false,
+    "[typescript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2,
+        "editor.rulers": [
+            100
+        ]
+    },
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2,
+        "editor.rulers": [
+            100
+        ]
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2
+    },
+    // eslint.config.mjs lives in frontend/, not at the workspace root; "auto"
+    // resolves it from the nearest package.json instead of failing to find it.
+    "eslint.workingDirectories": [
+        {
+            "mode": "auto"
+        }
+    ],
+
+    // Both formatters strip trailing whitespace and end files with a newline.
+    // Markdown is exempt: two trailing spaces is a hard line break there.
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "[markdown]": {
+        "files.trimTrailingWhitespace": false
+    }
+}
