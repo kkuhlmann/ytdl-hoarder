@@ -1,6 +1,12 @@
 ---
 name: diagnosing-yt-dlp-download-failures
-description: Use when a yt-dlp download in ytdl-hoarder fails, comes back empty/zero-byte, or throws "Signature solving failed", "Requested format is not available", "unable to download video data: HTTP Error 403", repeated HTTP 403s, or rate-limit-like blocking — before assuming it's a player-client misconfiguration OR reaching for the throttling settings. Also use when a video is stuck/deferred as "not released yet" / "still processing after live stream" (post-live) though it looks available — a release-detection gate, not a download failure.
+description: >-
+  Use when a yt-dlp download in ytdl-hoarder fails, comes back empty/zero-byte, or throws
+  "Signature solving failed", "Requested format is not available", "unable to download video
+  data: HTTP Error 403", repeated HTTP 403s, or rate-limit-like blocking — before assuming it's a
+  player-client misconfiguration OR reaching for the throttling settings. Also use when a video
+  is stuck/deferred as "not released yet" / "still processing after live stream" (post-live)
+  though it looks available — a release-detection gate, not a download failure.
 ---
 
 # Diagnosing yt-dlp Download Failures
