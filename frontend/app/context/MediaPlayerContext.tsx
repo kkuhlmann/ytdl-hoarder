@@ -6,9 +6,13 @@ import { apiUrl } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
 import { saveRating } from "@/app/_hooks/useMediaActions"
 
-// Virtual (non-DB) playlist id used for on-the-fly queues like the tag-based
-// "Tag Mix". Must be truthy so autoplay and footer context activate.
+// Virtual (non-DB) playlist ids for on-the-fly queues: the tag-based "Tag Mix",
+// and the media library's current filter. Negative so they can never collide
+// with a real playlist id, and truthy so autoplay and footer context activate.
 export const TAG_MIX_PLAYLIST_ID = -1
+export const LIBRARY_MIX_PLAYLIST_ID = -2
+
+const isVirtualPlaylist = (playlistId: number) => playlistId < 0
 
 type MediaPlayerState = {
   audioVisible: boolean
@@ -443,7 +447,7 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
     setMediaPlayer((prev) => (
       prev.playlistId === playlistId ? { ...prev, resumeEnabled: enabled } : prev
     ))
-    if (enabled && playlistId !== TAG_MIX_PLAYLIST_ID) {
+    if (enabled && !isVirtualPlaylist(playlistId)) {
       void syncPlaylistQueue(playlistId, true)
     }
   }, [syncPlaylistQueue])

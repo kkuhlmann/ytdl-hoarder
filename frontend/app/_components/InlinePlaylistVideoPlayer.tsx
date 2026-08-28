@@ -17,12 +17,26 @@ import {
 import { cn } from "@/lib/utils"
 import { formatDate } from "@/app/utils"
 import { StarRating } from "./StarRating"
+import { useElementDuration } from "@/app/_hooks/useElementDuration"
 
 type InlinePlaylistVideoPlayerProps = {
   onReturn: () => void
+  backLabel?: string
+  /**
+   * Chained after this player's own, for a host that layers controls needing the
+   * live element beside it (the library's clipping controls). Must be stable —
+   * VideoPlayer re-runs its ref effect whenever the callback identity changes.
+   */
+  videoRefCallback?: (element: HTMLVideoElement | null) => void
+  onTimeUpdate?: (time: number) => void
 }
 
-export function InlinePlaylistVideoPlayer({ onReturn }: InlinePlaylistVideoPlayerProps) {
+export function InlinePlaylistVideoPlayer({
+  onReturn,
+  backLabel = "Return to Playlist",
+  videoRefCallback,
+  onTimeUpdate,
+}: InlinePlaylistVideoPlayerProps) {
   const {
     mediaPlayer,
     closeVideoPlayer,
@@ -35,10 +49,17 @@ export function InlinePlaylistVideoPlayer({ onReturn }: InlinePlaylistVideoPlaye
   } = useMediaPlayer()
 
   const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(0)
   const [autoplayBlocked, setAutoplayBlocked] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const durationListenerRef = useRef<(() => void) | null>(null)
+  const { duration, refCallback: measureDuration } = useElementDuration(videoRef)
+
+  const handleVideoRef = useCallback(
+    (element: HTMLVideoElement | null) => {
+      measureDuration(element)
+      videoRefCallback?.(element)
+    },
+    [measureDuration, videoRefCallback]
+  )
 
   const timeRemaining = duration - currentTime
   const showNextUp =
@@ -62,23 +83,8 @@ export function InlinePlaylistVideoPlayer({ onReturn }: InlinePlaylistVideoPlaye
 
   const handleTimeUpdate = (time: number) => {
     setCurrentTime(time)
+    onTimeUpdate?.(time)
   }
-
-  // Stable: VideoPlayer re-runs its ref effect whenever this identity changes,
-  // so an inline arrow would re-attach the listener on every time-update tick.
-  // The removal below keeps that a non-event even if a dep is added later.
-  const handleVideoRef = useCallback((ref: HTMLVideoElement | null) => {
-    if (videoRef.current && durationListenerRef.current) {
-      videoRef.current.removeEventListener("loadedmetadata", durationListenerRef.current)
-      durationListenerRef.current = null
-    }
-    videoRef.current = ref
-    if (!ref) return
-    const update = () => setDuration(ref.duration)
-    if (ref.duration) update()
-    ref.addEventListener("loadedmetadata", update)
-    durationListenerRef.current = update
-  }, [])
 
   const handlePlayNextManual = () => {
     setAutoplayBlocked(false)
@@ -117,7 +123,7 @@ export function InlinePlaylistVideoPlayer({ onReturn }: InlinePlaylistVideoPlaye
         className="gap-2"
       >
         <ArrowLeftIcon className="h-4 w-4" />
-        Return to Playlist
+        {backLabel}
       </Button>
 
       <div className="relative">

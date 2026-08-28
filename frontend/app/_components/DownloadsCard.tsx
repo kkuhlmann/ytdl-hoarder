@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, Dispatch, SetStateAction } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, Dispatch, SetStateAction } from "react"
 import { useFetchEffect } from "@/app/_hooks/useFetchEffect"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { TrashIcon, BookOpenIcon, ArrowLeftIcon, MagnifyingGlassIcon, CalendarIcon, EyeIcon, ForwardIcon, ChevronDownIcon } from "@heroicons/react/20/solid"
+import { TrashIcon, BookOpenIcon, ArrowLeftIcon, MagnifyingGlassIcon, CalendarIcon, EyeIcon, ForwardIcon, ChevronDownIcon, PlayIcon, ArrowsRightLeftIcon } from "@heroicons/react/20/solid"
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline"
 import { MediaListView } from "@/app/_components/media/MediaListView"
 import { GroupBySelector } from "@/app/_components/GroupBySelector"
@@ -16,20 +16,24 @@ import { GroupBreadcrumb } from "@/app/_components/GroupBreadcrumb"
 import { useDownloadGrouping } from "@/app/_hooks/useDownloadGrouping"
 import { useElementDuration } from "@/app/_hooks/useElementDuration"
 import { useTriStateSort } from "@/app/_hooks/useTriStateSort"
+import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import { MediaBulkActions } from "@/app/_components/media/MediaBulkActions"
-import { useMediaPlayer } from "@/app/context/MediaPlayerContext"
+import { useMediaPlayer, LIBRARY_MIX_PLAYLIST_ID } from "@/app/context/MediaPlayerContext"
 import { DownloadButton } from "./DownloadButton"
 import { TablePagination } from "@/app/_components/TablePagination"
 import { VideoPlayer } from "@/app/_components/MediaPlayer"
+import { InlinePlaylistVideoPlayer } from "@/app/_components/InlinePlaylistVideoPlayer"
 import { VideoClippingControls } from "@/app/_components/VideoClippingControls"
 import { MediaClipEditor } from "@/app/_components/media/MediaClipEditor"
 import { Download, DownloadOptionsType, SortDirection, MediaStats, TagInfo, GroupLeafFilter } from "../types/DownloadsOptions"
+import type { PlaylistMedia } from "@/app/types/PlaylistOptions"
 import { TranscriptSegmentTable } from "./TranscriptSegmentTable"
 import { MediaStatsBar } from "./MediaStatsBar"
 import { TagFilter } from "./TagFilter"
 import { RatingFilter } from "./RatingFilter"
 import { StarRating } from "./StarRating"
 import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate } from "@/app/utils"
@@ -52,6 +56,8 @@ type VideoMetadata = {
 const NO_METADATA: VideoMetadata = {}
 const NO_SEMANTIC_ROWS: any[] = []
 
+const QUEUE_POOL_LIMIT = 1000
+
 const TRANSCRIPT_TABLE_HEAD = [
   "Score",
   "FTS",
@@ -70,7 +76,8 @@ type DownloadsCardProps = {
     sortDirection?: SortDirection,
     tagIds?: number[] | null,
     minRating?: number | null,
-    groupFilter?: GroupLeafFilter | null
+    groupFilter?: GroupLeafFilter | null,
+    pageSize?: number
   ) => Promise<any>
   fetchTranscriptSegments: (
     standard_search: string,
@@ -144,11 +151,30 @@ export function DownloadsCard({
     key: "",
     ids: NO_SELECTION,
   })
-  const { openAudioPlayer, closeAudioPlayer, openVideoPlayer, closeVideoPlayer } = useMediaPlayer()
+  const {
+    mediaPlayer,
+    openVideoPlayer,
+    closeVideoPlayer,
+    playMediaQueue,
+    setQueueResume,
+  } = useMediaPlayer()
+  const [resumeEnabled, setResumeEnabled] = useResumePlayback(LIBRARY_MIX_PLAYLIST_ID)
 
   const [showDownloadForm, setShowDownloadForm] = useState(false)
   const [viewMode, setViewMode] = useViewMode("downloads")
-  const [displayVideo, setDisplayVideo] = useState(false)
+
+  // openVideoPlayer clears every queue field, so the standalone path must never
+  // run for a track the queue is driving — and a transcript jump must still be
+  // able to take the pane over from a queue that is mid-play.
+  const [videoSource, setVideoSource] = useState<"standalone" | "queue" | null>(null)
+  const displayVideo = videoSource !== null
+  const queueActive = mediaPlayer.playlistId === LIBRARY_MIX_PLAYLIST_ID
+
+  // The whole filtered set, which the paged list never holds. Keyed on the filter
+  // it was fetched for, and dropped by an explicit refresh — the poll only
+  // refills the visible page.
+  const queuePool = useRef<{ key: string; rows: Download[] } | null>(null)
+  const [queueLoading, setQueueLoading] = useState(false)
   // Clip editor target. Audio and video both go through MediaClipEditor, so the
   // scissors action lands on the same surface here as it does in playlists.
   const [clipTarget, setClipTarget] = useState<Download | null>(null)
@@ -240,12 +266,23 @@ export function DownloadsCard({
     { enabled: metadataKey !== "" }
   )
 
+  // Opens the inline queue player when the queue reaches a VIDEO track, which
+  // autoplay can do without any click here.
+  useEffect(() => {
+    if (!queueActive) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- local state the player mirrors into, not derives from: both play paths and the back button write it too
+    setVideoSource(mediaPlayer.videoVisible ? "queue" : null)
+  }, [queueActive, mediaPlayer.videoVisible])
+
   // Feed the shared media-session metadata so the iOS lock screen shows the video's
   // thumbnail during standalone (non-playlist) playback, matching audio. Cleared on
   // return-to-library / tab-switch unmount so videoVisible never leaks into the
   // playlist video surface.
+  //
+  // Queue tracks are excluded: startQueue/playNext already populate all of this,
+  // and openVideoPlayer would wipe the queue out.
   useEffect(() => {
-    if (!displayVideo || !rowSelect.media_details_id) return
+    if (videoSource !== "standalone" || !rowSelect.media_details_id) return
     openVideoPlayer({
       media_details_id: rowSelect.media_details_id,
       title: rowSelect.title,
@@ -256,7 +293,7 @@ export function DownloadsCard({
     })
     return () => closeVideoPlayer()
   }, [
-    displayVideo,
+    videoSource,
     rowSelect.media_details_id,
     rowSelect.title,
     rowSelect.channel,
@@ -378,6 +415,7 @@ export function DownloadsCard({
   const statsLoading = stats === null && statsFetching
 
   const handleRefresh = useCallback(() => {
+    queuePool.current = null
     reloadDownloads()
     reloadStats()
     loadTags()
@@ -393,36 +431,148 @@ export function DownloadsCard({
     [],
   )
 
-  const selectMediaRow = (row: Download) => {
-    setRowSelect({
-      media_details_id: row.media_details_id,
-      title: row.title,
-      channel: row.channel,
-      url: row.url,
-      duration: row.duration || 0,
-      playback_position: row.playback_position || 0,
-      thumbnail_path: row.thumbnail_path,
-      exact_start: false,
-    })
-  }
+  // `selectionKey` minus the page: a queue spans every page of a filter.
+  const queueFilterKey = JSON.stringify([
+    status,
+    search,
+    sortBy,
+    sortDirection,
+    selectedTagIds,
+    minRating,
+    grouping.leafKey,
+  ])
+
+  // Surfaces as the footer's `[n/N] <name>` badge and the lock screen's "album".
+  const queueName = useMemo(() => {
+    const parts: string[] = []
+    if (search.length > 2) parts.push(`"${search}"`)
+    const tagNames = allTags
+      .filter((t) => selectedTagIds.includes(t.id))
+      .map((t) => t.name)
+    if (tagNames.length > 0) parts.push(tagNames.join(" + "))
+    if (minRating != null) parts.push(`${minRating}★+`)
+    const leafLabels = grouping.breadcrumb.segments.map((seg) => seg.label)
+    if (grouping.atLeaf && leafLabels.length > 0) parts.push(leafLabels.join(" / "))
+    return parts.length > 0 ? `Library · ${parts.join(" · ")}` : "Library"
+  }, [search, allTags, selectedTagIds, minRating, grouping.atLeaf, grouping.breadcrumb])
+
+  const loadQueuePool = useCallback(async (): Promise<Download[]> => {
+    if (queuePool.current?.key === queueFilterKey) return queuePool.current.rows
+
+    const key = queueFilterKey
+    setQueueLoading(true)
+    try {
+      const { tableRows: records } = await fetchDownloads(
+        search,
+        status,
+        1,
+        sortBy,
+        sortDirection,
+        grouping.leaf?.tagIds ?? selectedTagIds,
+        minRating,
+        grouping.leaf?.filter ?? null,
+        QUEUE_POOL_LIMIT
+      )
+      // The list endpoint keys rows on `id`, which the client exposes as
+      // media_details_id. Only rows with a file can join the queue.
+      const rows: Download[] = (records as any[])
+        .filter((row) => row.file_path)
+        .map((row) => ({
+          ...row,
+          media_details_id: row.id,
+          playlist_id: LIBRARY_MIX_PLAYLIST_ID,
+          position: 0,
+          added_at: row.downloaded_at || row.created_at || "",
+        }))
+      // Not cached when empty: fetchDownloads resolves an error to an empty page,
+      // so caching one would poison this filter until it changes or is refreshed.
+      if (rows.length > 0) queuePool.current = { key, rows }
+      return rows
+    } finally {
+      setQueueLoading(false)
+    }
+  }, [
+    queueFilterKey,
+    fetchDownloads,
+    search,
+    status,
+    sortBy,
+    sortDirection,
+    grouping.leaf,
+    selectedTagIds,
+    minRating,
+  ])
+
+  const startQueueFrom = useCallback(
+    async (pick: (rows: Download[]) => number | undefined, shuffle: boolean) => {
+      let rows: Download[]
+      try {
+        rows = await loadQueuePool()
+      } catch {
+        toast.error("Failed to load the playback queue")
+        return
+      }
+      const targetMediaDetailsId = pick(rows)
+      if (rows.length === 0 || targetMediaDetailsId === undefined) {
+        toast.error("No playable media matches the current filter")
+        return
+      }
+      playMediaQueue({
+        playlistId: LIBRARY_MIX_PLAYLIST_ID,
+        playlistName: queueName,
+        media: rows as unknown as PlaylistMedia[],
+        shuffle,
+        targetMediaDetailsId,
+        resume: resumeEnabled,
+      })
+    },
+    [loadQueuePool, playMediaQueue, queueName, resumeEnabled]
+  )
 
   const handleMediaOpen = (row: Download) => {
-    selectMediaRow(row)
-    if (row.media_type === "VIDEO") {
-      closeAudioPlayer()
-      setDisplayVideo(true)
-    } else if (row.media_type === "AUDIO") {
-      setDisplayVideo(false)
-      openAudioPlayer({
-        media_details_id: row.media_details_id,
-        title: row.title,
-        channel: row.channel,
-        url: row.url,
-        start_time: row.playback_position || 0,
-        duration: row.duration,
-        thumbnail_path: row.thumbnail_path,
-      })
+    if (!row.file_path) {
+      toast.error("Media file not available")
+      return
     }
+    // A target missing from the pool silently starts the queue at index 0, which
+    // is what the guard above prevents.
+    void startQueueFrom(() => row.media_details_id, false)
+  }
+
+  const handlePlayAll = () => {
+    void startQueueFrom((rows) => rows[0]?.media_details_id, false)
+  }
+
+  const handleShuffle = () => {
+    void startQueueFrom(
+      (rows) => rows[Math.floor(Math.random() * rows.length)]?.media_details_id,
+      true
+    )
+  }
+
+  const nowPlayingClass = useCallback(
+    (item: Download) =>
+      queueActive &&
+      (mediaPlayer.audioVisible || mediaPlayer.videoVisible) &&
+      mediaPlayer.media_details_id === item.media_details_id
+        ? "bg-matrix/10"
+        : undefined,
+    [
+      queueActive,
+      mediaPlayer.audioVisible,
+      mediaPlayer.videoVisible,
+      mediaPlayer.media_details_id,
+    ]
+  )
+
+  const showTranscriptVideo = useCallback(
+    (visible: boolean) => setVideoSource(visible ? "standalone" : null),
+    []
+  )
+
+  const toggleResume = (next: boolean) => {
+    setResumeEnabled(next)
+    setQueueResume(LIBRARY_MIX_PLAYLIST_ID, next)
   }
 
   /**
@@ -566,11 +716,31 @@ export function DownloadsCard({
               backLabel="Return to Library"
             />
           </CardContent>
+        ) : videoSource === "queue" ? (
+          <CardContent className="pt-6 space-y-4">
+            <InlinePlaylistVideoPlayer
+              backLabel="Return to Library"
+              onReturn={() => setVideoSource(null)}
+              videoRefCallback={handleVideoRef}
+              onTimeUpdate={setVideoCurrentTime}
+            />
+            <VideoClippingControls
+              mediaDetailsId={mediaPlayer.media_details_id}
+              duration={mediaPlayer.duration || videoElementDuration}
+              currentTime={videoCurrentTime}
+              onSeek={(time) => {
+                if (videoRefRef.current) {
+                  videoRefRef.current.currentTime = time
+                }
+              }}
+              videoRef={videoRefRef}
+            />
+          </CardContent>
         ) : displayVideo ? (
           <CardContent className="pt-6 space-y-4">
             <Button
               variant="outline"
-              onClick={() => setDisplayVideo(false)}
+              onClick={() => setVideoSource(null)}
               className="gap-2 mt-4"
             >
               <ArrowLeftIcon className="h-4 w-4" />
@@ -641,7 +811,6 @@ export function DownloadsCard({
             <CardHeader className="pb-3">
               <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
                 <div className="flex items-center flex-nowrap shrink-0 gap-1.5 sm:gap-3">
-                  <CardTitle className="text-lg hidden sm:block">Media Library</CardTitle>
                   <button
                     onClick={() => {
                       const newStatus = status === "SKIPPED" ? "COMPLETE" : "SKIPPED"
@@ -695,6 +864,42 @@ export function DownloadsCard({
                           />
                         )}
                       </div>
+                      {!semanticSearch && (
+                        <div className="flex items-center gap-1.5 sm:gap-3">
+                          <Separator orientation="vertical" className="h-4" />
+                          <label
+                            className="flex items-center gap-2 cursor-pointer select-none"
+                            title="Resume each track from where you left off, and show how far through each one you are"
+                          >
+                            <Switch checked={resumeEnabled} onCheckedChange={toggleResume} />
+                            <span className="hidden sm:inline font-mono text-xs text-text-secondary">
+                              Resume
+                            </span>
+                          </label>
+                          <Button
+                            variant="matrix"
+                            size="sm"
+                            onClick={handlePlayAll}
+                            disabled={queueLoading}
+                            className="gap-2"
+                            title="Play everything matching the current filter"
+                          >
+                            <PlayIcon className="h-4 w-4" />
+                            <span className="hidden sm:inline">Play All</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleShuffle}
+                            disabled={queueLoading}
+                            className="gap-2"
+                            title="Shuffle everything matching the current filter"
+                          >
+                            <ArrowsRightLeftIcon className="h-4 w-4" />
+                            <span className="hidden sm:inline">Shuffle</span>
+                          </Button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -761,7 +966,7 @@ export function DownloadsCard({
                     )}
                     loading={loading}
                     setRowSelect={setRowSelect}
-                    setDisplayVideo={setDisplayVideo}
+                    setDisplayVideo={showTranscriptVideo}
                     searchQuery={semanticSearch}
                   />
                 ) : effectiveViewMode === "grid" ? (
@@ -801,6 +1006,8 @@ export function DownloadsCard({
                     onRowClick={handleMediaOpen}
                     onClip={handleMediaClip}
                     onPopulateSkipped={populateDownloadFromSkipped}
+                    showPlaybackProgress={resumeEnabled}
+                    rowClassName={nowPlayingClass}
                   />
                   </>
                   )
@@ -820,6 +1027,8 @@ export function DownloadsCard({
                     onRowClick={handleRowActivate}
                     onClip={handleMediaClip}
                     onPopulateSkipped={populateDownloadFromSkipped}
+                    showPlaybackProgress={resumeEnabled}
+                    rowClassName={nowPlayingClass}
                     {...(selectionActive && {
                       selection: {
                         selectedIds,
