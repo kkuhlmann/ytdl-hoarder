@@ -58,6 +58,11 @@ const NO_SEMANTIC_ROWS: any[] = []
 
 const QUEUE_POOL_LIMIT = 1000
 
+// The list endpoint keys rows on `id`; the queue needs them keyed the way both
+// the media list and the player expect.
+type MediaListRecord = Omit<Download, "media_details_id"> & { id: number }
+type QueueRow = Download & PlaylistMedia
+
 const TRANSCRIPT_TABLE_HEAD = [
   "Score",
   "FTS",
@@ -153,10 +158,14 @@ export function DownloadsCard({
   })
   const {
     mediaPlayer,
+    openAudioPlayer,
+    closeAudioPlayer,
     openVideoPlayer,
     closeVideoPlayer,
     playMediaQueue,
     setQueueResume,
+    toggleShuffle,
+    detachQueue,
   } = useMediaPlayer()
   const [resumeEnabled, setResumeEnabled] = useResumePlayback(LIBRARY_MIX_PLAYLIST_ID)
 
@@ -169,11 +178,18 @@ export function DownloadsCard({
   const [videoSource, setVideoSource] = useState<"standalone" | "queue" | null>(null)
   const displayVideo = videoSource !== null
   const queueActive = mediaPlayer.playlistId === LIBRARY_MIX_PLAYLIST_ID
+  const queuePlaying =
+    queueActive && (mediaPlayer.audioVisible || mediaPlayer.videoVisible)
+  const queueMode: "off" | "ordered" | "shuffled" = !queuePlaying
+    ? "off"
+    : mediaPlayer.shuffleEnabled
+      ? "shuffled"
+      : "ordered"
 
   // The whole filtered set, which the paged list never holds. Keyed on the filter
   // it was fetched for, and dropped by an explicit refresh — the poll only
   // refills the visible page.
-  const queuePool = useRef<{ key: string; rows: Download[] } | null>(null)
+  const queuePool = useRef<{ key: string; rows: QueueRow[] } | null>(null)
   const [queueLoading, setQueueLoading] = useState(false)
   // Clip editor target. Audio and video both go through MediaClipEditor, so the
   // scissors action lands on the same surface here as it does in playlists.
@@ -431,16 +447,21 @@ export function DownloadsCard({
     [],
   )
 
-  // `selectionKey` minus the page: a queue spans every page of a filter.
-  const queueFilterKey = JSON.stringify([
-    status,
-    search,
-    sortBy,
-    sortDirection,
-    selectedTagIds,
-    minRating,
-    grouping.leafKey,
-  ])
+  // `selectionKey` minus the page (a queue spans every page of a filter), plus the
+  // visible row ids so a finished download or a deletion drops the pool while an
+  // unchanged poll tick keeps it.
+  const queuePoolKey =
+    JSON.stringify([
+      status,
+      search,
+      sortBy,
+      sortDirection,
+      selectedTagIds,
+      minRating,
+      grouping.leafKey,
+    ]) +
+    "|" +
+    (tableRows as Download[]).map((row) => row.media_details_id).join(",")
 
   // Surfaces as the footer's `[n/N] <name>` badge and the lock screen's "album".
   const queueName = useMemo(() => {
@@ -456,10 +477,10 @@ export function DownloadsCard({
     return parts.length > 0 ? `Library · ${parts.join(" · ")}` : "Library"
   }, [search, allTags, selectedTagIds, minRating, grouping.atLeaf, grouping.breadcrumb])
 
-  const loadQueuePool = useCallback(async (): Promise<Download[]> => {
-    if (queuePool.current?.key === queueFilterKey) return queuePool.current.rows
+  const loadQueuePool = useCallback(async (force: boolean): Promise<QueueRow[]> => {
+    if (!force && queuePool.current?.key === queuePoolKey) return queuePool.current.rows
 
-    const key = queueFilterKey
+    const key = queuePoolKey
     setQueueLoading(true)
     try {
       const { tableRows: records } = await fetchDownloads(
@@ -473,9 +494,8 @@ export function DownloadsCard({
         grouping.leaf?.filter ?? null,
         QUEUE_POOL_LIMIT
       )
-      // The list endpoint keys rows on `id`, which the client exposes as
-      // media_details_id. Only rows with a file can join the queue.
-      const rows: Download[] = (records as any[])
+      // Only rows with a file can join the queue.
+      const rows: QueueRow[] = (records as MediaListRecord[])
         .filter((row) => row.file_path)
         .map((row) => ({
           ...row,
@@ -492,7 +512,7 @@ export function DownloadsCard({
       setQueueLoading(false)
     }
   }, [
-    queueFilterKey,
+    queuePoolKey,
     fetchDownloads,
     search,
     status,
@@ -504,65 +524,116 @@ export function DownloadsCard({
   ])
 
   const startQueueFrom = useCallback(
-    async (pick: (rows: Download[]) => number | undefined, shuffle: boolean) => {
-      let rows: Download[]
+    async (
+      pick: (rows: QueueRow[]) => number | undefined,
+      shuffle: boolean
+    ): Promise<boolean> => {
+      const resolves = (
+        rows: QueueRow[],
+        target: number | undefined
+      ): target is number =>
+        target !== undefined && rows.some((r) => r.media_details_id === target)
+
+      const wasCached = queuePool.current?.key === queuePoolKey
+      let rows: QueueRow[]
+      let target: number | undefined
       try {
-        rows = await loadQueuePool()
+        rows = await loadQueuePool(false)
+        target = pick(rows)
+        // startQueue falls back to index 0 for a target it can't find, so a pool
+        // cached before this row existed would silently play something else.
+        if (wasCached && !resolves(rows, target)) {
+          rows = await loadQueuePool(true)
+          target = pick(rows)
+        }
       } catch {
         toast.error("Failed to load the playback queue")
-        return
+        return false
       }
-      const targetMediaDetailsId = pick(rows)
-      if (rows.length === 0 || targetMediaDetailsId === undefined) {
-        toast.error("No playable media matches the current filter")
-        return
-      }
+      if (!resolves(rows, target)) return false
+
       playMediaQueue({
         playlistId: LIBRARY_MIX_PLAYLIST_ID,
         playlistName: queueName,
-        media: rows as unknown as PlaylistMedia[],
+        media: rows,
         shuffle,
-        targetMediaDetailsId,
+        targetMediaDetailsId: target,
         resume: resumeEnabled,
       })
+      return true
     },
-    [loadQueuePool, playMediaQueue, queueName, resumeEnabled]
+    [loadQueuePool, queuePoolKey, playMediaQueue, queueName, resumeEnabled]
   )
+
+  const reportEmptyQueue = (started: boolean) => {
+    if (!started) toast.error("No playable media matches the current filter")
+  }
+
+  const playStandalone = (row: Download) => {
+    setRowSelect({
+      media_details_id: row.media_details_id,
+      title: row.title,
+      channel: row.channel,
+      url: row.url,
+      duration: row.duration || 0,
+      playback_position: row.playback_position || 0,
+      thumbnail_path: row.thumbnail_path,
+      exact_start: false,
+    })
+    if (row.media_type === "VIDEO") {
+      closeAudioPlayer()
+      setVideoSource("standalone")
+    } else if (row.media_type === "AUDIO") {
+      setVideoSource(null)
+      openAudioPlayer({
+        media_details_id: row.media_details_id,
+        title: row.title,
+        channel: row.channel,
+        url: row.url,
+        start_time: row.playback_position || 0,
+        duration: row.duration,
+        thumbnail_path: row.thumbnail_path,
+      })
+    }
+  }
 
   const handleMediaOpen = (row: Download) => {
     if (!row.file_path) {
       toast.error("Media file not available")
       return
     }
-    // A target missing from the pool silently starts the queue at index 0, which
-    // is what the guard above prevents.
-    void startQueueFrom(() => row.media_details_id, false)
+    if (queueMode === "off") {
+      playStandalone(row)
+      return
+    }
+    void startQueueFrom(() => row.media_details_id, queueMode === "shuffled").then(
+      (started) => {
+        if (!started) playStandalone(row)
+      }
+    )
   }
 
   const handlePlayAll = () => {
-    void startQueueFrom((rows) => rows[0]?.media_details_id, false)
+    if (queueMode === "ordered") return detachQueue(LIBRARY_MIX_PLAYLIST_ID)
+    if (queueMode === "shuffled") return toggleShuffle()
+    void startQueueFrom((rows) => rows[0]?.media_details_id, false).then(reportEmptyQueue)
   }
 
   const handleShuffle = () => {
+    if (queueMode === "shuffled") return detachQueue(LIBRARY_MIX_PLAYLIST_ID)
+    if (queueMode === "ordered") return toggleShuffle()
     void startQueueFrom(
       (rows) => rows[Math.floor(Math.random() * rows.length)]?.media_details_id,
       true
-    )
+    ).then(reportEmptyQueue)
   }
 
   const nowPlayingClass = useCallback(
     (item: Download) =>
-      queueActive &&
-      (mediaPlayer.audioVisible || mediaPlayer.videoVisible) &&
-      mediaPlayer.media_details_id === item.media_details_id
+      queuePlaying && mediaPlayer.media_details_id === item.media_details_id
         ? "bg-matrix/10"
         : undefined,
-    [
-      queueActive,
-      mediaPlayer.audioVisible,
-      mediaPlayer.videoVisible,
-      mediaPlayer.media_details_id,
-    ]
+    [queuePlaying, mediaPlayer.media_details_id]
   )
 
   const showTranscriptVideo = useCallback(
@@ -877,23 +948,37 @@ export function DownloadsCard({
                             </span>
                           </label>
                           <Button
-                            variant="matrix"
+                            variant={queueMode === "ordered" ? "matrix" : "outline"}
                             size="sm"
                             onClick={handlePlayAll}
                             disabled={queueLoading}
+                            aria-pressed={queueMode === "ordered"}
                             className="gap-2"
-                            title="Play everything matching the current filter"
+                            title={
+                              queueMode === "ordered"
+                                ? "Stop after this track"
+                                : queueMode === "shuffled"
+                                  ? "Play the current queue in order"
+                                  : "Play everything matching the current filter"
+                            }
                           >
                             <PlayIcon className="h-4 w-4" />
                             <span className="hidden sm:inline">Play All</span>
                           </Button>
                           <Button
-                            variant="outline"
+                            variant={queueMode === "shuffled" ? "matrix" : "outline"}
                             size="sm"
                             onClick={handleShuffle}
                             disabled={queueLoading}
+                            aria-pressed={queueMode === "shuffled"}
                             className="gap-2"
-                            title="Shuffle everything matching the current filter"
+                            title={
+                              queueMode === "shuffled"
+                                ? "Stop after this track"
+                                : queueMode === "ordered"
+                                  ? "Shuffle the current queue"
+                                  : "Shuffle everything matching the current filter"
+                            }
                           >
                             <ArrowsRightLeftIcon className="h-4 w-4" />
                             <span className="hidden sm:inline">Shuffle</span>

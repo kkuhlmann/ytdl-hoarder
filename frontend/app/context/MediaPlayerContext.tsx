@@ -82,6 +82,8 @@ type MediaPlayerContextType = {
   // Apply a resume-toggle change to the queue that's already playing.
   setQueueResume: (playlistId: number, enabled: boolean) => void
 
+  detachQueue: (playlistId: number) => void
+
   /**
    * Positions the player has persisted this session, keyed by media id, so a
    * list can show progress for tracks it fetched before they were played.
@@ -452,6 +454,29 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
     }
   }, [syncPlaylistQueue])
 
+  /**
+   * Drops the queue while the current track plays on, stopping only at its end.
+   *
+   * Leaving media_details_id and start_time alone is the whole mechanism: both
+   * players are driven by `id` + `startTime`, so writing either reloads the
+   * element and restarts the track.
+   */
+  const detachQueue = useCallback((playlistId: number) => {
+    setMediaPlayer((prev) =>
+      prev.playlistId === playlistId
+        ? {
+            ...prev,
+            playlistId: undefined,
+            playlistName: undefined,
+            playlistMedia: undefined,
+            currentIndex: undefined,
+            originalPlaylistMedia: undefined,
+            shuffleEnabled: false,
+          }
+        : prev
+    )
+  }, [])
+
   const playNext = useCallback(() => {
     setMediaPlayer((prev) => {
       if (!prev.playlistMedia || prev.currentIndex === undefined) return prev
@@ -638,6 +663,7 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
         replaceQueue,
         syncPlaylistQueue,
         setQueueResume,
+        detachQueue,
         savedPositions,
         notePlaybackPosition,
         rateMedia,
