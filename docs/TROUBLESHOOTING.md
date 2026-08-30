@@ -41,8 +41,9 @@ problem rather than yt-dlp or the player clients:
 
 - Re-export cookies from a private/incognito window, then close it *without logging out*. Cookies
   exported from a window you keep using are rotated out from under the app.
-- Check the player clients under Settings. If the list contains `web_creator` (YouTube Studio) or
-  `ios`, remove them — neither is appropriate for this workload. "Reset to defaults" clears them.
+- Check the player clients under Settings. If the list contains `web_creator` (YouTube Studio),
+  `ios`, or `android_vr` (YouTube has rejected every format it returns since August 2026), remove
+  them — none is appropriate for this workload. "Reset to defaults" clears them.
 
 **Stuck or orphaned tasks.** Task state lives entirely in PostgreSQL, so queued or interrupted tasks
 resume automatically after a restart. For a clean slate, cancel pending tasks from the Tasks tab, set
