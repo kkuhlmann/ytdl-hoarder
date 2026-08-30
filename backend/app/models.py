@@ -89,37 +89,44 @@ class SourceType(str, Enum):
     SUBSCRIPTION = 'subscription'
 
 
-# All valid yt-dlp YouTube player clients
-# PO tokens are automatically provided by bgutil-pot when available (installed in Docker image).
-# Priority: No PO token required > PO token supported > PO token required
+# All valid yt-dlp YouTube player clients, grouped by GVS PO-token policy. bgutil-pot
+# supplies those tokens in the Docker image, so a PO-token client is usable here — but a
+# client that needs no token still degrades more gracefully, hence the ordering.
+# Capabilities below are read off yt-dlp's INNERTUBE_CLIENTS (extractor/youtube/_base.py);
+# re-check them on a yt-dlp bump, since a client's policy can change under a stable name.
 #
 # Cookie support for age-restricted content:
-#   SUPPORTS cookies: web, web_safari, mweb, web_creator, web_embedded, web_music, tv_downgraded
-#   NO cookie age-gate support: android_vr, android, ios, tv, tv_simply
+#   SUPPORTS cookies: web, web_safari, mweb, web_creator, web_embedded, web_music, tv, tv_downgraded
+#   NO cookie support: visionos, android_vr, android, ios, tv_simply
 VALID_PLAYER_CLIENTS = [
     # No PO token required
-    'android_vr',  # No PO token, no cookie age-gate support
-    'tv',  # No PO token, no cookie age-gate support, may have DRM
-    'tv_simply',  # No PO token, no cookies support
-    'tv_downgraded',  # No PO token, cookie-optimized (yt-dlp default with cookies)
-    'web_embedded',  # No PO token, only embeddable videos
+    'visionos',  # No PO token, no JS player either, no cookies support
+    'tv',  # No PO token, may have DRM
+    'tv_downgraded',  # No PO token, cookie-capable
+    'web_embedded',  # No PO token, only embeddable videos (yt-dlp's first choice with cookies)
     # PO token supported (provided automatically by bgutil-pot)
     'web',  # PO token supported, only SABR formats
     'web_safari',  # PO token supported, HLS (m3u8) formats
+    'tv_simply',  # PO token required (GVS), no cookies support
     'ios',  # Requires iOSGuard PO token (not provided by bgutil-pot), no cookies support
     'mweb',  # PO token required (GVS), mobile web
     'web_music',  # PO token required (GVS), YouTube Music
     'web_creator',  # PO token required (GVS), requires cookies
     'android',  # PO token required (GVS/Player), no cookies support
+    # Kept selectable, but YouTube 403s every format it returns as of 2026-08-17, which
+    # is why yt-dlp dropped it from its own defaults (yt-dlp PR #17461). Do not default to it.
+    'android_vr',  # PO token required (GVS), no cookies support
 ]
 
-# Default player clients - with bgutil-pot installed, PO-token clients are usable too
-DEFAULT_PLAYER_CLIENTS = ['android_vr', 'tv', 'tv_simply', 'web', 'web_safari']
+# visionos leads because it is the only client needing neither a PO token nor a JS player,
+# and it is yt-dlp's own first anonymous choice since 2026.08.19. The rest is depth yt-dlp's
+# two-client default does not carry: a PO-token client, an HLS client, and an embed fallback.
+DEFAULT_PLAYER_CLIENTS = ['visionos', 'tv_simply', 'web_safari', 'web', 'web_embedded']
 
-# Default player clients when cookies are active - only clients that support cookie-based age-gate bypass.
-# tv_downgraded is yt-dlp's own first choice for cookie-authenticated downloads.
-# Excludes android_vr, tv, tv_simply, ios, android (no cookie age-gate support).
-DEFAULT_COOKIES_PLAYER_CLIENTS = ['tv_downgraded', 'web', 'web_safari', 'mweb', 'web_embedded']
+# Default player clients when cookies are active - only clients that support cookie-based age-gate
+# bypass, so visionos cannot lead here. Order follows yt-dlp's own authenticated default
+# (web_embedded, tv_downgraded, web), then adds the two cookie-capable clients it leaves out.
+DEFAULT_COOKIES_PLAYER_CLIENTS = ['web_embedded', 'tv_downgraded', 'web', 'web_safari', 'mweb']
 
 
 class User(SQLModel, table=True):
