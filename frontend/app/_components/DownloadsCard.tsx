@@ -19,6 +19,7 @@ import { useTriStateSort } from "@/app/_hooks/useTriStateSort"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import { MediaBulkActions } from "@/app/_components/media/MediaBulkActions"
 import { useMediaPlayer, LIBRARY_MIX_PLAYLIST_ID } from "@/app/context/MediaPlayerContext"
+import { cn } from "@/lib/utils"
 import { DownloadButton } from "./DownloadButton"
 import { TablePagination } from "@/app/_components/TablePagination"
 import { VideoPlayer } from "@/app/_components/MediaPlayer"
@@ -163,7 +164,6 @@ export function DownloadsCard({
     openVideoPlayer,
     closeVideoPlayer,
     playMediaQueue,
-    setQueueResume,
     toggleShuffle,
     detachQueue,
   } = useMediaPlayer()
@@ -185,6 +185,23 @@ export function DownloadsCard({
     : mediaPlayer.shuffleEnabled
       ? "shuffled"
       : "ordered"
+
+  // A playing clip carries the clip's own id here (ClipsTable), which can collide
+  // with a library row's — so clips anchor and highlight nothing.
+  const playingId =
+    (mediaPlayer.audioVisible || mediaPlayer.videoVisible) && !mediaPlayer.isClip
+      ? mediaPlayer.media_details_id
+      : undefined
+
+  // Overridden rather than written, so the stored preference comes back after.
+  const resumeActive = queueMode === "off" && resumeEnabled
+
+  // A ref because the reader is a cleanup, which closes over a render where this
+  // was still false.
+  const queueActiveRef = useRef(false)
+  useEffect(() => {
+    queueActiveRef.current = queueActive
+  }, [queueActive])
 
   // The whole filtered set, which the paged list never holds. Keyed on the filter
   // it was fetched for, and dropped by an explicit refresh — the poll only
@@ -307,7 +324,11 @@ export function DownloadsCard({
       duration: rowSelect.duration,
       start_time: rowSelect.playback_position,
     })
-    return () => closeVideoPlayer()
+    // A queue adopting this video flips videoSource to "queue", firing this
+    // cleanup — which would close the pane the queue just opened.
+    return () => {
+      if (!queueActiveRef.current) closeVideoPlayer()
+    }
   }, [
     videoSource,
     rowSelect.media_details_id,
@@ -523,6 +544,12 @@ export function DownloadsCard({
     minRating,
   ])
 
+  const anchored =
+    (fallback: (rows: QueueRow[]) => number | undefined) => (rows: QueueRow[]) =>
+      playingId && rows.some((r) => r.media_details_id === playingId)
+        ? playingId
+        : fallback(rows)
+
   const startQueueFrom = useCallback(
     async (
       pick: (rows: QueueRow[]) => number | undefined,
@@ -558,11 +585,23 @@ export function DownloadsCard({
         media: rows,
         shuffle,
         targetMediaDetailsId: target,
-        resume: resumeEnabled,
+        resume: false,
+        continueCurrent:
+          target === playingId
+            ? // Audio stays mounted in the footer, so any start_time re-seeks it.
+              // A standalone video hands over to the inline player and remounts,
+              // so that one needs the live position.
+              {
+                at:
+                  videoSource === "standalone"
+                    ? videoRefRef.current?.currentTime
+                    : undefined,
+              }
+            : undefined,
       })
       return true
     },
-    [loadQueuePool, queuePoolKey, playMediaQueue, queueName, resumeEnabled]
+    [loadQueuePool, queuePoolKey, playMediaQueue, queueName, playingId, videoSource]
   )
 
   const reportEmptyQueue = (started: boolean) => {
@@ -570,13 +609,14 @@ export function DownloadsCard({
   }
 
   const playStandalone = (row: Download) => {
+    const startAt = resumeActive ? row.playback_position || 0 : 0
     setRowSelect({
       media_details_id: row.media_details_id,
       title: row.title,
       channel: row.channel,
       url: row.url,
       duration: row.duration || 0,
-      playback_position: row.playback_position || 0,
+      playback_position: startAt,
       thumbnail_path: row.thumbnail_path,
       exact_start: false,
     })
@@ -590,7 +630,7 @@ export function DownloadsCard({
         title: row.title,
         channel: row.channel,
         url: row.url,
-        start_time: row.playback_position || 0,
+        start_time: startAt,
         duration: row.duration,
         thumbnail_path: row.thumbnail_path,
       })
@@ -616,35 +656,33 @@ export function DownloadsCard({
   const handlePlayAll = () => {
     if (queueMode === "ordered") return detachQueue(LIBRARY_MIX_PLAYLIST_ID)
     if (queueMode === "shuffled") return toggleShuffle()
-    void startQueueFrom((rows) => rows[0]?.media_details_id, false).then(reportEmptyQueue)
+    void startQueueFrom(anchored((rows) => rows[0]?.media_details_id), false).then(
+      reportEmptyQueue
+    )
   }
 
   const handleShuffle = () => {
     if (queueMode === "shuffled") return detachQueue(LIBRARY_MIX_PLAYLIST_ID)
     if (queueMode === "ordered") return toggleShuffle()
     void startQueueFrom(
-      (rows) => rows[Math.floor(Math.random() * rows.length)]?.media_details_id,
+      anchored((rows) => rows[Math.floor(Math.random() * rows.length)]?.media_details_id),
       true
     ).then(reportEmptyQueue)
   }
 
+  // Unscoped by playlistId, unlike PlaylistDetailView: the library is every track's
+  // home, so it lights up whatever is playing. Not queuePlaying — that derives
+  // queueMode, which drives the Play All / Shuffle button states.
   const nowPlayingClass = useCallback(
     (item: Download) =>
-      queuePlaying && mediaPlayer.media_details_id === item.media_details_id
-        ? "bg-matrix/10"
-        : undefined,
-    [queuePlaying, mediaPlayer.media_details_id]
+      playingId === item.media_details_id ? "bg-matrix/10" : undefined,
+    [playingId]
   )
 
   const showTranscriptVideo = useCallback(
     (visible: boolean) => setVideoSource(visible ? "standalone" : null),
     []
   )
-
-  const toggleResume = (next: boolean) => {
-    setResumeEnabled(next)
-    setQueueResume(LIBRARY_MIX_PLAYLIST_ID, next)
-  }
 
   /**
    * Table row click. Unlike a grid card, a DELETED row opens the source URL and
@@ -939,10 +977,23 @@ export function DownloadsCard({
                         <div className="flex items-center gap-1.5 sm:gap-3">
                           <Separator orientation="vertical" className="h-4" />
                           <label
-                            className="flex items-center gap-2 cursor-pointer select-none"
-                            title="Resume each track from where you left off, and show how far through each one you are"
+                            className={cn(
+                              "flex items-center gap-2 select-none",
+                              queueMode === "off"
+                                ? "cursor-pointer"
+                                : "cursor-not-allowed opacity-50"
+                            )}
+                            title={
+                              queueMode === "off"
+                                ? "Resume each track from where you left off, and show how far through each one you are"
+                                : "Play All and Shuffle always start each track from the beginning"
+                            }
                           >
-                            <Switch checked={resumeEnabled} onCheckedChange={toggleResume} />
+                            <Switch
+                              checked={resumeActive}
+                              onCheckedChange={setResumeEnabled}
+                              disabled={queueMode !== "off"}
+                            />
                             <span className="hidden sm:inline font-mono text-xs text-text-secondary">
                               Resume
                             </span>
@@ -1091,7 +1142,7 @@ export function DownloadsCard({
                     onRowClick={handleMediaOpen}
                     onClip={handleMediaClip}
                     onPopulateSkipped={populateDownloadFromSkipped}
-                    showPlaybackProgress={resumeEnabled}
+                    showPlaybackProgress={resumeActive}
                     rowClassName={nowPlayingClass}
                   />
                   </>
@@ -1112,7 +1163,7 @@ export function DownloadsCard({
                     onRowClick={handleRowActivate}
                     onClip={handleMediaClip}
                     onPopulateSkipped={populateDownloadFromSkipped}
-                    showPlaybackProgress={resumeEnabled}
+                    showPlaybackProgress={resumeActive}
                     rowClassName={nowPlayingClass}
                     {...(selectionActive && {
                       selection: {
