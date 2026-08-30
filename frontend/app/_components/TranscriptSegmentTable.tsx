@@ -16,7 +16,7 @@ type TranscriptSegmentTableProps = {
   tableRows: TranscriptSegment[]
   loading: boolean
   setRowSelect: Dispatch<SetStateAction<any>>
-  setDisplayVideo: Dispatch<SetStateAction<boolean>>
+  setDisplayVideo: (visible: boolean) => void
   searchQuery?: string
 }
 

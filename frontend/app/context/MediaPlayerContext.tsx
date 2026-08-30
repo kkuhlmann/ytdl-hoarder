@@ -6,9 +6,13 @@ import { apiUrl } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
 import { saveRating } from "@/app/_hooks/useMediaActions"
 
-// Virtual (non-DB) playlist id used for on-the-fly queues like the tag-based
-// "Tag Mix". Must be truthy so autoplay and footer context activate.
+// Virtual (non-DB) playlist ids for on-the-fly queues: the tag-based "Tag Mix",
+// and the media library's current filter. Negative so they can never collide
+// with a real playlist id, and truthy so autoplay and footer context activate.
 export const TAG_MIX_PLAYLIST_ID = -1
+export const LIBRARY_MIX_PLAYLIST_ID = -2
+
+const isVirtualPlaylist = (playlistId: number) => playlistId < 0
 
 type MediaPlayerState = {
   audioVisible: boolean
@@ -64,6 +68,12 @@ type MediaPlayerContextType = {
     shuffle: boolean
     targetMediaDetailsId: number
     resume: boolean
+    /**
+     * Continue the track already on air instead of seeding it from `resume`.
+     * `at` is only for a surface that remounts anyway; otherwise `start_time` is
+     * left untouched, since useMediaElement re-seeks whenever it changes.
+     */
+    continueCurrent?: { at?: number }
   }) => void
   playNext: () => void
   playPrevious: () => void
@@ -77,6 +87,8 @@ type MediaPlayerContextType = {
 
   // Apply a resume-toggle change to the queue that's already playing.
   setQueueResume: (playlistId: number, enabled: boolean) => void
+
+  detachQueue: (playlistId: number) => void
 
   /**
    * Positions the player has persisted this session, keyed by media id, so a
@@ -283,7 +295,7 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
 
   // Shared engine: start playback of an already-resolved media list under a
   // (real or virtual) playlist id. Used by both playPlaylist and playMediaQueue.
-  const startQueue = useCallback((playlistId: number, playlistName: string, media: PlaylistMedia[], shuffle: boolean, targetMediaDetailsId: number, resume: boolean) => {
+  const startQueue = useCallback((playlistId: number, playlistName: string, media: PlaylistMedia[], shuffle: boolean, targetMediaDetailsId: number, resume: boolean, continueCurrent?: { at?: number }) => {
     if (media.length === 0) return
 
     syncSeqRef.current++
@@ -313,28 +325,33 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
     const isVideo = mediaType === 'VIDEO'
     const isAudio = mediaType === 'AUDIO'
 
-    setMediaPlayer((prev) => ({
-      audioVisible: isAudio,
-      videoVisible: isVideo,
-      media_details_id: currentMedia.media_details_id,
-      title: currentMedia.title || "Unknown",
-      channel: currentMedia.channel || "",
-      duration: currentMedia.duration,
-      thumbnail_path: currentMedia.thumbnail_path,
-      rating: currentMedia.media_details_id === prev.media_details_id ? prev.rating : undefined,
-      isClip: false,
-      playlistId,
-      playlistName,
-      playlistMedia,
-      currentIndex: playIndex,
-      autoplayEnabled: true,
-      shuffleEnabled: shuffle,
-      originalPlaylistMedia,
-      resumeEnabled: resume,
-      activeMediaType: isVideo ? 'VIDEO' : isAudio ? 'AUDIO' : null,
-      start_time: resumeStart(currentMedia, resume),
-      exact_start: false,
-    }))
+    setMediaPlayer((prev) => {
+      const adopting = !!continueCurrent && prev.media_details_id === currentMedia.media_details_id
+
+      return {
+        audioVisible: isAudio,
+        videoVisible: isVideo,
+        media_details_id: currentMedia.media_details_id,
+        title: currentMedia.title || "Unknown",
+        channel: currentMedia.channel || "",
+        duration: currentMedia.duration,
+        thumbnail_path: currentMedia.thumbnail_path,
+        rating: currentMedia.media_details_id === prev.media_details_id ? prev.rating : undefined,
+        isClip: false,
+        playlistId,
+        playlistName,
+        playlistMedia,
+        currentIndex: playIndex,
+        autoplayEnabled: true,
+        shuffleEnabled: shuffle,
+        originalPlaylistMedia,
+        resumeEnabled: resume,
+        activeMediaType: isVideo ? 'VIDEO' : isAudio ? 'AUDIO' : null,
+        start_time: adopting ? (continueCurrent.at ?? prev.start_time) : resumeStart(currentMedia, resume),
+        // Preserved too, or adopting a transcript jump re-seeks to its timestamp.
+        exact_start: adopting ? (prev.exact_start ?? false) : false,
+      }
+    })
   }, [])
 
   // Fetch all media in the playlist. light=true skips the per-user rating, tag
@@ -364,8 +381,9 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
     shuffle: boolean
     targetMediaDetailsId: number
     resume: boolean
+    continueCurrent?: { at?: number }
   }) => {
-    startQueue(args.playlistId, args.playlistName, args.media, args.shuffle, args.targetMediaDetailsId, args.resume)
+    startQueue(args.playlistId, args.playlistName, args.media, args.shuffle, args.targetMediaDetailsId, args.resume, args.continueCurrent)
   }, [startQueue])
 
   /**
@@ -443,10 +461,33 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
     setMediaPlayer((prev) => (
       prev.playlistId === playlistId ? { ...prev, resumeEnabled: enabled } : prev
     ))
-    if (enabled && playlistId !== TAG_MIX_PLAYLIST_ID) {
+    if (enabled && !isVirtualPlaylist(playlistId)) {
       void syncPlaylistQueue(playlistId, true)
     }
   }, [syncPlaylistQueue])
+
+  /**
+   * Drops the queue while the current track plays on, stopping only at its end.
+   *
+   * Leaving media_details_id and start_time alone is the whole mechanism: both
+   * players are driven by `id` + `startTime`, so writing either reloads the
+   * element and restarts the track.
+   */
+  const detachQueue = useCallback((playlistId: number) => {
+    setMediaPlayer((prev) =>
+      prev.playlistId === playlistId
+        ? {
+            ...prev,
+            playlistId: undefined,
+            playlistName: undefined,
+            playlistMedia: undefined,
+            currentIndex: undefined,
+            originalPlaylistMedia: undefined,
+            shuffleEnabled: false,
+          }
+        : prev
+    )
+  }, [])
 
   const playNext = useCallback(() => {
     setMediaPlayer((prev) => {
@@ -634,6 +675,7 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
         replaceQueue,
         syncPlaylistQueue,
         setQueueResume,
+        detachQueue,
         savedPositions,
         notePlaybackPosition,
         rateMedia,

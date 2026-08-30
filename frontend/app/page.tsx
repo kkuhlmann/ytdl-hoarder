@@ -210,6 +210,7 @@ export default function HomePage() {
       tagIds?: number[] | null,
       minRating?: number | null,
       groupFilter?: GroupLeafFilter | null,
+      pageSize?: number,
     ) => {
       const params: Record<string, any> = {
         search: searchParam(search),
@@ -218,6 +219,9 @@ export default function HomePage() {
         sort_by: sortBy,
         sort_direction: sortDirection,
         ...adminParam,
+      }
+      if (pageSize) {
+        params.page_size = pageSize
       }
       if (tagIds && tagIds.length > 0) {
         params.tag_ids = tagIds.join(",")

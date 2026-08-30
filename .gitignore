@@ -4,6 +4,7 @@
 /MUSIC
 /AUDIO_PODCAST
 /AUDIO
+/audio
 # Secrets. config.yml holds auth.secret_key, and `setup.sh --overwrite` writes
 # .env.bak / config.yml.bak beside them — so the .bak forms must be covered or a
 # later `git add -A` commits the JWT signing key.
