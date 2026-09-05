@@ -5,7 +5,7 @@ import { useFetchEffect } from "@/app/_hooks/useFetchEffect"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { TrashIcon, BookOpenIcon, ArrowLeftIcon, MagnifyingGlassIcon, CalendarIcon, EyeIcon, ForwardIcon, ChevronDownIcon, PlayIcon, ArrowsRightLeftIcon } from "@heroicons/react/20/solid"
+import { BookOpenIcon, ArrowLeftIcon, MagnifyingGlassIcon, CalendarIcon, EyeIcon, ChevronDownIcon } from "@heroicons/react/20/solid"
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline"
 import { MediaListView } from "@/app/_components/media/MediaListView"
 import { GroupBySelector } from "@/app/_components/GroupBySelector"
@@ -19,7 +19,6 @@ import { useTriStateSort } from "@/app/_hooks/useTriStateSort"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import { MediaBulkActions } from "@/app/_components/media/MediaBulkActions"
 import { useMediaPlayer, LIBRARY_MIX_PLAYLIST_ID } from "@/app/context/MediaPlayerContext"
-import { cn } from "@/lib/utils"
 import { DownloadButton } from "./DownloadButton"
 import { TablePagination } from "@/app/_components/TablePagination"
 import { VideoPlayer } from "@/app/_components/MediaPlayer"
@@ -30,11 +29,11 @@ import { Download, DownloadOptionsType, SortDirection, MediaStats, TagInfo, Grou
 import type { PlaylistMedia } from "@/app/types/PlaylistOptions"
 import { TranscriptSegmentTable } from "./TranscriptSegmentTable"
 import { MediaStatsBar } from "./MediaStatsBar"
-import { TagFilter } from "./TagFilter"
-import { RatingFilter } from "./RatingFilter"
+import { FiltersPopover } from "./FiltersPopover"
+import { ScopeSelector } from "./ScopeSelector"
+import { PlaybackControls } from "./PlaybackControls"
 import { StarRating } from "./StarRating"
 import { Slider } from "@/components/ui/slider"
-import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate } from "@/app/utils"
@@ -949,50 +948,23 @@ export function DownloadsCard({
         ) : (
           <>
             <CardHeader className="pb-3">
-              <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
+              <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden">
                 <div className="flex items-center flex-nowrap shrink-0 gap-1.5 sm:gap-3">
-                  <button
-                    onClick={() => {
-                      const newStatus = status === "SKIPPED" ? "COMPLETE" : "SKIPPED"
-                      setStatus(newStatus)
+                  <ScopeSelector
+                    value={status}
+                    onChange={(next) => {
+                      setStatus(next)
                       setPageNumber(1)
                     }}
-                    className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-xs font-mono transition-colors justify-center ${
-                      status === "SKIPPED"
-                        ? "bg-status-warning/20 text-status-warning border border-status-warning/30"
-                        : "bg-bg-surface text-text-muted hover:text-text-secondary border border-border"
-                    }`}
-                    title={status === "SKIPPED" ? "Viewing skipped media" : "Show skipped media"}
-                  >
-                    <ForwardIcon className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">{status === "SKIPPED" ? "Skipped" : "Show Skipped"}</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      const newStatus = status === "DELETED" ? "COMPLETE" : "DELETED"
-                      setStatus(newStatus)
-                      setPageNumber(1)
-                    }}
-                    className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-xs font-mono transition-colors justify-center ${
-                      status === "DELETED"
-                        ? "bg-status-error/20 text-status-error border border-status-error/30"
-                        : "bg-bg-surface text-text-muted hover:text-text-secondary border border-border"
-                    }`}
-                    title={status === "DELETED" ? "Viewing deleted media" : "Show deleted media"}
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">{status === "DELETED" ? "Deleted" : "Show Deleted"}</span>
-                  </button>
+                  />
                   {status === "COMPLETE" && (
                     <>
-                      <TagFilter
+                      <FiltersPopover
                         allTags={allTags}
                         selectedTagIds={selectedTagIds}
-                        onChange={(ids) => { setSelectedTagIds(ids); setPageNumber(1) }}
-                      />
-                      <RatingFilter
+                        onTagsChange={(ids) => { setSelectedTagIds(ids); setPageNumber(1) }}
                         minRating={minRating}
-                        onChange={(r) => { setMinRating(r); setPageNumber(1) }}
+                        onRatingChange={(r) => { setMinRating(r); setPageNumber(1) }}
                       />
                       <div className="flex items-center gap-1.5 sm:gap-3">
                         <Separator orientation="vertical" className="h-4" />
@@ -1007,64 +979,17 @@ export function DownloadsCard({
                       {!semanticSearch && (
                         <div className="flex items-center gap-1.5 sm:gap-3">
                           <Separator orientation="vertical" className="h-4" />
-                          <label
-                            className={cn(
-                              "flex items-center gap-2 select-none",
-                              queueMode === "off"
-                                ? "cursor-pointer"
-                                : "cursor-not-allowed opacity-50"
-                            )}
-                            title={
-                              queueMode === "off"
-                                ? "Resume each track from where you left off, and show how far through each one you are"
-                                : "Play All and Shuffle always start each track from the beginning"
-                            }
-                          >
-                            <Switch
-                              checked={resumeActive}
-                              onCheckedChange={setResumeEnabled}
-                              disabled={queueMode !== "off"}
-                            />
-                            <span className="hidden sm:inline font-mono text-xs text-text-secondary">
-                              Resume
-                            </span>
-                          </label>
-                          <Button
-                            variant={queueMode === "ordered" ? "matrix" : "outline"}
-                            size="sm"
-                            onClick={handlePlayAll}
+                          <PlaybackControls
+                            queueMode={queueMode}
                             disabled={queueLoading}
-                            aria-pressed={queueMode === "ordered"}
-                            className="gap-2"
-                            title={
-                              queueMode === "ordered"
-                                ? "Stop after this track"
-                                : queueMode === "shuffled"
-                                  ? "Play the current queue in order"
-                                  : "Play everything matching the current filter"
-                            }
-                          >
-                            <PlayIcon className="h-4 w-4" />
-                            <span className="hidden sm:inline">Play All</span>
-                          </Button>
-                          <Button
-                            variant={queueMode === "shuffled" ? "matrix" : "outline"}
-                            size="sm"
-                            onClick={handleShuffle}
-                            disabled={queueLoading}
-                            aria-pressed={queueMode === "shuffled"}
-                            className="gap-2"
-                            title={
-                              queueMode === "shuffled"
-                                ? "Stop after this track"
-                                : queueMode === "ordered"
-                                  ? "Shuffle the current queue"
-                                  : "Shuffle everything matching the current filter"
-                            }
-                          >
-                            <ArrowsRightLeftIcon className="h-4 w-4" />
-                            <span className="hidden sm:inline">Shuffle</span>
-                          </Button>
+                            onPlayAll={handlePlayAll}
+                            onShuffle={handleShuffle}
+                            resume={{
+                              checked: resumeActive,
+                              disabled: queueMode !== "off",
+                              onChange: setResumeEnabled,
+                            }}
+                          />
                         </div>
                       )}
                     </>
