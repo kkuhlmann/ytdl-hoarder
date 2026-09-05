@@ -8,9 +8,14 @@ type StarRatingProps = {
   rating: number | null | undefined
   onRate: (rating: number | null) => void
   compact?: boolean
+  /** Overrides the tooltip, for surfaces where a star means something other than "rate this". */
+  titleFor?: (star: number, isSelected: boolean) => string
 }
 
-export function StarRating({ rating, onRate, compact = false }: StarRatingProps) {
+const rateTitle = (star: number, isSelected: boolean) =>
+  isSelected ? "Clear rating" : `Rate ${star} star${star > 1 ? "s" : ""}`
+
+export function StarRating({ rating, onRate, compact = false, titleFor = rateTitle }: StarRatingProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [hoverRating, setHoverRating] = useState<number | null>(null)
   const displayRating = hoverRating ?? rating ?? 0
@@ -43,7 +48,7 @@ export function StarRating({ rating, onRate, compact = false }: StarRatingProps)
           }}
           onMouseEnter={() => setHoverRating(star)}
           className="p-0 transition-colors"
-          title={rating === star ? "Clear rating" : `Rate ${star} star${star > 1 ? "s" : ""}`}
+          title={titleFor(star, rating === star)}
         >
           {star <= displayRating ? (
             <StarSolid className={`${size} text-status-warning`} />

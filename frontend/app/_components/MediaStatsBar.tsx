@@ -1,57 +1,39 @@
 "use client"
 
-import { useState } from "react"
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
+import { Fragment, useState } from "react"
+import { badgeVariants } from "@/components/ui/badge"
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { MediaStats } from "@/app/types/DownloadsOptions"
 import { formatCount } from "@/app/_components/stats/format"
+import { cn } from "@/lib/utils"
 
 type MediaStatsBarProps = {
   stats: MediaStats | null
   loading?: boolean
 }
 
-type StatBadgeProps = {
-  variant: "matrix" | "success" | "queued"
-  value: number
+type Stat = {
+  key: keyof MediaStats
   label: string
-  /** Which edge of the badge the tooltip should anchor to, so it doesn't overflow the viewport. */
-  align?: "left" | "center" | "right"
+  className: string
 }
 
-const TOOLTIP_POSITION_CLASSES: Record<NonNullable<StatBadgeProps["align"]>, string> = {
-  left: "left-0",
-  center: "left-1/2 -translate-x-1/2",
-  right: "right-0",
-}
+const STATS: Stat[] = [
+  { key: "total_downloads", label: "downloads", className: "text-matrix" },
+  { key: "downloads_with_transcripts", label: "with transcripts", className: "text-status-success" },
+  { key: "total_transcript_blocks", label: "transcript blocks", className: "text-status-queued" },
+]
 
-function StatBadge({ variant, value, label, align = "center" }: StatBadgeProps) {
-  const [showTooltip, setShowTooltip] = useState(false)
-
-  return (
-    <div className="relative flex items-center gap-1.5">
-      <Badge
-        variant={variant}
-        className="min-w-7 sm:min-w-10 justify-center cursor-pointer sm:cursor-default"
-        onClick={() => setShowTooltip((v) => !v)}
-        onMouseLeave={() => setShowTooltip(false)}
-      >
-        {formatCount(value)}
-      </Badge>
-      <span className="hidden sm:inline text-xs text-text-muted font-mono">{label}</span>
-      {showTooltip && (
-        <div
-          className={`absolute -top-2 -translate-y-full bg-bg-elevated border border-matrix-dim rounded px-2 py-1 text-xs font-mono text-text-primary whitespace-nowrap z-10 sm:hidden ${TOOLTIP_POSITION_CLASSES[align]}`}
-          role="tooltip"
-        >
-          {label}: {value.toLocaleString()}
-        </div>
-      )}
-    </div>
-  )
-}
-
+/**
+ * The three media counts as one chip, with the labels behind it.
+ *
+ * The breakdown is a portalled Popover, not a positioned div: the strip this sits
+ * in scrolls horizontally, and an `overflow-x-auto` box clips both axes, so
+ * anything drawn outside the 32px-tall header is invisible.
+ */
 export function MediaStatsBar({ stats, loading }: MediaStatsBarProps) {
+  const [open, setOpen] = useState(false)
+
   if (loading || !stats) {
     return (
       <div className="flex items-center gap-2">
@@ -62,13 +44,37 @@ export function MediaStatsBar({ stats, loading }: MediaStatsBarProps) {
     )
   }
 
+  const summary = STATS.map((s) => `${stats[s.key].toLocaleString()} ${s.label}`).join(", ")
+
   return (
-    <div className="flex flex-nowrap w-max items-center gap-x-1.5 sm:gap-x-3">
-      <StatBadge variant="matrix" value={stats.total_downloads} label="downloads" />
-      <Separator orientation="vertical" className="h-3 hidden sm:block" />
-      <StatBadge variant="success" value={stats.downloads_with_transcripts} label="with transcripts" />
-      <Separator orientation="vertical" className="h-3 hidden sm:block" />
-      <StatBadge variant="queued" value={stats.total_transcript_blocks} label="transcript blocks" align="right" />
-    </div>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className={cn(badgeVariants({ variant: "outline" }), "gap-1 whitespace-nowrap")}
+        aria-label={summary}
+        // Touch fires a synthetic enter before the click, which would open the
+        // popover only for the click to toggle it shut again.
+        onPointerEnter={(e) => e.pointerType === "mouse" && setOpen(true)}
+        onPointerLeave={(e) => e.pointerType === "mouse" && setOpen(false)}
+      >
+        {STATS.map((stat, i) => (
+          <Fragment key={stat.key}>
+            {i > 0 && <span className="text-text-muted">·</span>}
+            <span className={stat.className}>{formatCount(stats[stat.key])}</span>
+          </Fragment>
+        ))}
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-auto p-2"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        {STATS.map((stat) => (
+          <div key={stat.key} className="flex items-center justify-between gap-3 text-xs font-mono">
+            <span className={stat.className}>{stats[stat.key].toLocaleString()}</span>
+            <span className="text-text-muted">{stat.label}</span>
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
   )
 }
