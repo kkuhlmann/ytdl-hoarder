@@ -34,7 +34,7 @@ accounts and no cloud dependency.
 | Feature | Description |
 |---|---|
 | **Automatic subscriptions** | Subscribe to channels and playlists; new uploads download on a schedule, filtered by title keyword, upload date, or duration, as audio-only or full video. |
-| **Transcript search** | Items are transcribed locally with faster-whisper, embedded with onnxruntime, and stored in pgvector. Searches return the exact spoken passages and link to their timestamps. |
+| **Transcript search** | Items are transcribed locally with faster-whisper, embedded with onnxruntime, and stored in pgvector. Searches return the exact spoken passages and link to their timestamps, narrowed to whatever the library is currently filtered to — the search box, the open group folder, tag chips and minimum rating. |
 | **Mobile-optimized interface** | The web UI is built for phones and tablets as well as desktop: card layouts in place of tables, touch drag-and-drop, mobile chart forms, and native video fullscreen and picture-in-picture on iOS. |
 | **Waveform clipping** | Scrub an interactive waveform, drag region handles to frame-accurate start and end points, zoom for precision, and export a clip. |
 | **Real-time progress** | Downloads and transcriptions stream progress over Server-Sent Events, reporting phase (video vs. audio), and percent complete.
@@ -42,7 +42,7 @@ accounts and no cloud dependency.
 | **Playlists** | Build custom playlists with drag-and-drop ordering and play through them with next-up, shuffle, and autoplay controls. |
 | **Statistics** | Storage breakdown, download trends over time, transcription coverage, and filterable engagement metrics. |
 | **Multi-user and sharing** | Accounts with admin approval, per-user storage limits, and sharing of media, subscriptions, playlists, and clips. Media already downloaded by one user is granted to the next rather than downloaded twice. |
-| **Boolean search** | The Downloads search box matches channel and title and supports `&&` (AND) and `\|\|` (OR); `&&` binds tighter. Single `&` and `\|` are matched literally. |
+| **Boolean search** | The Downloads search box matches channel and title and supports `&&` (AND) and `\|\|` (OR); `&&` binds tighter. Single `&` and `\|` are matched literally. The operators narrow transcript search results too. |
 | **70+ themes** | Built-in themes from retro terminal to modern light and dark palettes, switchable instantly. |
 | **Audio visualizer** | Optional reactive visualizer behind the player bar for audio-only tracks, following the active theme's colors. Desktop only, to protect lock-screen playback on iOS. |
 

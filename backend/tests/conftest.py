@@ -337,6 +337,51 @@ def _db_engines(postgres_container):
 
 
 @pytest.fixture(scope='session')
+def pgvector_schema(_db_engines):
+    """Create the vector/FTS objects `SQLModel.metadata.create_all` cannot see.
+
+    `transcript_embeddings` and `transcript_blocks.text_search` exist only in
+    `baseline_schema.py`'s hand-written block, so without this no transcript-search
+    query can run at all here. Request it explicitly; most tests do not need it.
+
+    No teardown: `transcript_embeddings` cascades off `transcript_blocks`, which
+    `_reset_sql` already empties before every test.
+    """
+    with _db_engines.begin() as conn:
+        conn.execute(text('CREATE EXTENSION IF NOT EXISTS vector'))
+        conn.execute(
+            text(
+                'ALTER TABLE transcript_blocks '
+                'ADD COLUMN IF NOT EXISTS text_search tsvector '
+                "GENERATED ALWAYS AS (to_tsvector('english', coalesce(text, ''))) STORED"
+            )
+        )
+        conn.execute(
+            text(
+                'CREATE INDEX IF NOT EXISTS idx_transcript_blocks_fts '
+                'ON transcript_blocks USING GIN(text_search)'
+            )
+        )
+        conn.execute(
+            text("""
+                CREATE TABLE IF NOT EXISTS transcript_embeddings (
+                    transcript_block_id INTEGER PRIMARY KEY
+                        REFERENCES transcript_blocks(id) ON DELETE CASCADE,
+                    embedding vector(384)
+                )
+            """)
+        )
+        conn.execute(
+            text("""
+                CREATE INDEX IF NOT EXISTS ix_transcript_embeddings_embedding
+                ON transcript_embeddings
+                USING hnsw (embedding vector_cosine_ops)
+            """)
+        )
+    return _db_engines
+
+
+@pytest.fixture(scope='session')
 def _reset_sql(_db_engines):
     """One round-trip that empties every table and rewinds every sequence.
 

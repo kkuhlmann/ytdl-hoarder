@@ -88,7 +88,12 @@ type DownloadsCardProps = {
   fetchTranscriptSegments: (
     standard_search: string,
     semantic_search: string,
-    semanticWeight: number
+    semanticWeight: number,
+    filters: {
+      tagIds: number[]
+      minRating: number | null
+      groupFilter: GroupLeafFilter | null
+    }
   ) => Promise<any>
   fetchStats: (search?: string, status?: string) => Promise<MediaStats>
   downloadOptions: DownloadOptionsType
@@ -130,20 +135,10 @@ export function DownloadsCard({
     leafKey: null,
     n: 1,
   })
-  // Both the rows and the page reset when the query changes — same
-  // value-plus-its-key derivation as `selectedIds` and `pageNumber` above.
-  const semanticKey = `${semanticSearch}|${search}|${semanticWeight}`
-  const semanticTableRows =
-    semanticState.key === semanticKey ? semanticState.rows : NO_SEMANTIC_ROWS
   const [semanticPage, setSemanticPage] = useState<{ key: string; n: number }>({
     key: "",
     n: 1,
   })
-  const semanticPageNumber = semanticPage.key === semanticKey ? semanticPage.n : 1
-  const setSemanticPageNumber = useCallback(
-    (n: number) => setSemanticPage({ key: semanticKey, n }),
-    [semanticKey]
-  )
   const SEMANTIC_PAGE_SIZE = 15
   const [stats, setStats] = useState<MediaStats | null>(null)
 
@@ -227,7 +222,7 @@ export function DownloadsCard({
 
   // "Group by" folder navigation for the grid view (COMPLETE status only)
   const grouping = useDownloadGrouping({
-    enabled: effectiveViewMode === "grid" && status === "COMPLETE" && !semanticSearch,
+    enabled: effectiveViewMode === "grid" && status === "COMPLETE",
     status,
     search,
     tagIds: selectedTagIds,
@@ -241,6 +236,30 @@ export function DownloadsCard({
   const setPageNumber = useCallback(
     (n: number) => setPage({ leafKey: grouping.leafKey, n }),
     [grouping.leafKey]
+  )
+
+  // Drilling into a tag folder overrides the tag chips, exactly as it does for the
+  // media list — see `loadDownloads`.
+  const effectiveTagIds = grouping.scope?.tagIds ?? selectedTagIds
+
+  // Both the rows and the page reset when the query changes — same
+  // value-plus-its-key derivation as `selectedIds` and `pageNumber` above. It
+  // carries the whole scope, not just the two search strings, so results fetched
+  // inside one folder are never shown under another.
+  const semanticKey = JSON.stringify([
+    semanticSearch,
+    search,
+    semanticWeight,
+    grouping.scopeKey,
+    effectiveTagIds,
+    minRating,
+  ])
+  const semanticTableRows =
+    semanticState.key === semanticKey ? semanticState.rows : NO_SEMANTIC_ROWS
+  const semanticPageNumber = semanticPage.key === semanticKey ? semanticPage.n : 1
+  const setSemanticPageNumber = useCallback(
+    (n: number) => setSemanticPage({ key: semanticKey, n }),
+    [semanticKey]
   )
 
   const [rowSelect, setRowSelect] = useState<{
@@ -386,14 +405,13 @@ export function DownloadsCard({
     // When drilled into a group folder, the leaf overrides the tag filter and adds
     // channel/untagged/date params so this reuses the normal paginated list path.
     const leaf = grouping.leaf
-    const effectiveTagIds = leaf?.tagIds ?? selectedTagIds
     return fetchDownloads(
       search,
       status,
       pageNumber,
       sortBy,
       sortDirection,
-      effectiveTagIds,
+      leaf ? effectiveTagIds : selectedTagIds,
       minRating,
       leaf?.filter ?? null
     )
@@ -420,6 +438,7 @@ export function DownloadsCard({
     pageNumber,
     sortBy,
     sortDirection,
+    effectiveTagIds,
     selectedTagIds,
     minRating,
     setPageNumber,
@@ -757,17 +776,29 @@ export function DownloadsCard({
   // needing an effect to reset them.
   const { isLoading: semanticFetching } = useFetchEffect(
     () =>
-      fetchTranscriptSegments(search, semanticSearch, semanticWeight).then(
-        (rows: any[]) =>
-          setSemanticState({
-            key: semanticKey,
-            rows: rows.map((row: any) => ({
-              ...row,
-              media_details_id: row.media_details.id,
-            })),
-          })
+      fetchTranscriptSegments(search, semanticSearch, semanticWeight, {
+        tagIds: effectiveTagIds,
+        minRating,
+        groupFilter: grouping.scope?.filter ?? null,
+      }).then((rows: any[]) =>
+        setSemanticState({
+          key: semanticKey,
+          rows: rows.map((row: any) => ({
+            ...row,
+            media_details_id: row.media_details.id,
+          })),
+        })
       ),
-    [semanticKey, search, semanticSearch, semanticWeight, fetchTranscriptSegments],
+    [
+      semanticKey,
+      search,
+      semanticSearch,
+      semanticWeight,
+      effectiveTagIds,
+      minRating,
+      grouping.scope,
+      fetchTranscriptSegments,
+    ],
     { enabled: semanticSearch.length >= 3 }
   )
 
@@ -1094,6 +1125,14 @@ export function DownloadsCard({
 
               <div className={semanticSearch || effectiveViewMode === "table" ? "md:rounded-lg md:border md:border-border overflow-hidden" : ""}>
                 {semanticSearch ? (
+                  <>
+                  {grouping.isGrouping && (
+                    <GroupBreadcrumb
+                      breadcrumb={grouping.breadcrumb}
+                      canGoUp={grouping.groupPath.length > 0}
+                      onGoUp={grouping.goUp}
+                    />
+                  )}
                   <TranscriptSegmentTable
                     tableColumns={TRANSCRIPT_TABLE_HEAD}
                     tableRows={semanticTableRows.slice(
@@ -1105,6 +1144,7 @@ export function DownloadsCard({
                     setDisplayVideo={showTranscriptVideo}
                     searchQuery={semanticSearch}
                   />
+                  </>
                 ) : effectiveViewMode === "grid" ? (
                   grouping.showFolders ? (
                     <GroupFolderGrid
