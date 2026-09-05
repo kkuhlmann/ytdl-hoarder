@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import and_, asc, case, delete, desc, func, or_
 from sqlalchemy import select as sa_select
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 from sqlmodel import select
@@ -102,6 +103,19 @@ def _build_search_condition(search: str):
     return or_(*or_groups)
 
 
+def _build_access_condition(user_id: int, status: str | None, include_owned: bool):
+    """Scope a media query to what one user may see."""
+    if status in (TaskStatus.DELETED.value, TaskStatus.SKIPPED.value):
+        # DELETED records have no MediaAccess rows (removed during soft delete).
+        # SKIPPED records should only show the owner's own skipped media.
+        return MediaDetails.owner_id == user_id
+
+    accessible_ids = select(MediaAccess.media_details_id).where(MediaAccess.user_id == user_id)
+    if include_owned:
+        return or_(MediaDetails.id.in_(accessible_ids), MediaDetails.owner_id == user_id)
+    return MediaDetails.id.in_(accessible_ids)
+
+
 def _build_media_conditions(
     *,
     user_id: int | None = None,
@@ -115,12 +129,19 @@ def _build_media_conditions(
     date_field: str | None = None,
     date_year: int | None = None,
     date_month: int | None = None,
+    include_owned: bool = False,
 ) -> list:
     """Build WHERE conditions shared by get_all_media_details and get_media_stats.
 
     Only adds a status condition when status is truthy. The channel / untagged /
     date_field+date_year(+date_month) params support drilling into a group folder
     (see get_media_groups) by reusing this single list query path.
+
+    include_owned widens the access branch to "shared with me OR mine", stating the
+    Owner -> Shared -> Admin tier directly instead of inferring it from status. The
+    transcript search needs it: it spans every status, so it never reaches the
+    owner_id branch below, and a soft delete removes every MediaAccess row for the
+    media including the owner's.
     """
     conditions = []
 
@@ -128,15 +149,7 @@ def _build_media_conditions(
         conditions.append(MediaDetails.status == status)
 
     if user_id is not None:
-        if status in (TaskStatus.DELETED.value, TaskStatus.SKIPPED.value):
-            # DELETED records have no MediaAccess rows (removed during soft delete).
-            # SKIPPED records should only show the owner's own skipped media.
-            conditions.append(MediaDetails.owner_id == user_id)
-        else:
-            accessible_ids = select(MediaAccess.media_details_id).where(
-                MediaAccess.user_id == user_id
-            )
-            conditions.append(MediaDetails.id.in_(accessible_ids))
+        conditions.append(_build_access_condition(user_id, status, include_owned))
 
     if search:
         search_condition = _build_search_condition(search)
@@ -189,6 +202,40 @@ def _build_media_conditions(
         conditions.append(and_(field >= start, field < end))
 
     return conditions
+
+
+def build_media_scope_subquery(**filters) -> tuple[str, dict] | None:
+    """Render the media-list filter as a SQL subquery plus its bound params.
+
+    The transcript search is raw SQL — transcript_embeddings has no ORM model — so
+    this is how it reuses the exact conditions the list uses instead of re-deriving
+    them in a second dialect. Returns None when nothing is being filtered, which
+    keeps the search's SQL byte-identical to its unscoped form.
+
+    render_postcompile is required: without it the tag_ids IN (...) expanding
+    bindparam renders as a [POSTCOMPILE_...] token no driver can bind. literal_binds
+    would be an injection hole — the search string is user input.
+    """
+    conditions = _build_media_conditions(**filters)
+    if not conditions:
+        return None
+    stmt = sa_select(MediaDetails.id).where(and_(*conditions))
+    compiled = stmt.compile(
+        dialect=postgresql.dialect(paramstyle='named'),
+        compile_kwargs={'render_postcompile': True},
+    )
+    return str(compiled), dict(compiled.params)
+
+
+async def count_scoped_media(**filters) -> int:
+    """Count the media the same filters select. Drives the search's query-shape choice."""
+    conditions = _build_media_conditions(**filters)
+    stmt = sa_select(func.count()).select_from(MediaDetails)
+    if conditions:
+        stmt = stmt.where(and_(*conditions))
+    async with db.get_async_session() as session:
+        result = await session.execute(stmt)
+        return result.scalar_one()
 
 
 def _unpack_joined_results(result, has_playback_join: bool) -> tuple[list, dict[int, dict]]:

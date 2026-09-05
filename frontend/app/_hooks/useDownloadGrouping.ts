@@ -82,9 +82,11 @@ export function useDownloadGrouping({ enabled, status, search, tagIds, minRating
     return reset
   }, [enabled, reset])
 
-  // The leaf descriptor (media-list filter) when drilled all the way in.
-  const leaf: GroupLeaf | null = useMemo(() => {
-    if (!groupDim || !atLeaf) return null
+  // What the open path selects, at whatever depth it has reached — a year on its own
+  // is a scope, not just a waypoint. The media list only ever wants the leaf; the
+  // transcript search scopes to any depth.
+  const scope: GroupLeaf | null = useMemo(() => {
+    if (!groupDim || groupPath.length === 0) return null
     if (groupDim === "channel") {
       return { filter: { channel: groupPath[0].key } }
     }
@@ -95,15 +97,23 @@ export function useDownloadGrouping({ enabled, status, search, tagIds, minRating
     }
     // date dims: groupPath[0] = year, groupPath[1] = "YYYY-MM"
     const year = Number(groupPath[0].key)
-    const month = Number(groupPath[1].key.split("-")[1])
+    const month = groupPath[1] ? Number(groupPath[1].key.split("-")[1]) : undefined
     return { filter: { dateField: groupDim, year, month } }
-  }, [groupDim, atLeaf, groupPath])
+  }, [groupDim, groupPath])
 
-  // Stable id so consumers can react to leaf changes.
-  const leafKey = useMemo(
-    () => (atLeaf && groupDim ? `${groupDim}:${groupPath.map((s) => s.key).join("/")}` : null),
-    [atLeaf, groupDim, groupPath]
+  // Stable id so consumers can react to scope changes.
+  const scopeKey = useMemo(
+    () =>
+      groupDim && groupPath.length > 0
+        ? `${groupDim}:${groupPath.map((s) => s.key).join("/")}`
+        : null,
+    [groupDim, groupPath]
   )
+
+  // The leaf is the scope at full depth. `leafKey` keys the media list's page number
+  // and the playback queue pool, so it must stay null above the leaf.
+  const leaf = atLeaf ? scope : null
+  const leafKey = atLeaf ? scopeKey : null
 
   const breadcrumb = useMemo(
     () => ({
@@ -172,6 +182,8 @@ export function useDownloadGrouping({ enabled, status, search, tagIds, minRating
     isGrouping,
     atLeaf,
     showFolders,
+    scope,
+    scopeKey,
     leaf,
     leafKey,
     breadcrumb,

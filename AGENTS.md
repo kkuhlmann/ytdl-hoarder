@@ -80,6 +80,31 @@ keyword `search` supports `&&` / `||` operators (parsed in `_build_search_condit
 `repositories/media_details.py` — `&&` binds tighter than `||`, and single `&` / `|` are literal).
 `/health` is inline in `main.py`.
 
+**`/semantic/search` is scoped by the same `_build_media_conditions` the media list uses**, so the
+group-folder drill-down, tag chips, minimum rating and the keyword box all narrow which transcripts
+are searched. `transcript_embeddings` has no ORM model, so the bridge is
+`build_media_scope_subquery`, which compiles those conditions to a SQL fragment spliced into the raw
+`text()` queries. Four things there are load-bearing:
+- **The compiled fragment's bind names must stay disjoint from the ones the search builders bind by
+  hand** (`query`, `embedding`, `limit`, `fts_query`, …); `test_transcript_scope_sql.py` pins it.
+  `literal_binds` would remove the problem and add an injection hole — the search string is user
+  input.
+- **It passes `include_owned=True`.** A soft delete calls `remove_all_access_for_media`, which drops
+  every `MediaAccess` row *including the owner's*, so the access subquery alone hides an owner's own
+  kept transcripts from them. This is the same gap the list closes with its `owner_id` fallback for
+  DELETED/SKIPPED.
+- **`status` is deliberately not threaded.** Transcript search spans every status, and passing one
+  would also swap that widened access branch back to the narrower `owner_id`-only one.
+- **A narrow scope runs through a `MATERIALIZED` CTE specifically to deny the planner the HNSW
+  index.** pgvector post-filters an index scan, so a scoped `ORDER BY embedding <=> :q LIMIT n`
+  returns far fewer rows than asked — an empty result, not an error — which is exactly what drilling
+  into a group folder produces. Flattening that CTE back into the outer query reintroduces it
+  silently. Above `_EXACT_SCOPE_MEDIA_LIMIT` media the filter is no longer narrowing enough to beat
+  the index, so the index path stays; one `count_scoped_media` query picks between them and
+  short-circuits an empty scope before an embedding is ever computed. No dataset a test can seed
+  makes the planner choose the index path, so `test_scoped_vector_cte_is_materialized` pins the
+  keyword rather than the behaviour.
+
 ### Frontend (`frontend/app/`)
 
 **Toolchain** — upgraded July 2026; the non-obvious parts:
@@ -479,6 +504,11 @@ The fixture chain in `tests/conftest.py` is built for speed, and each piece of i
 - **Keep the `_reset_rate_limiters` autouse fixture.** The limiters are module-level singletons and
   `authenticated_client` registers via a real `POST`, so without it the budget is consumed across
   unrelated tests.
+- **Transcript-search tests must request `pgvector_schema`.** `transcript_embeddings` and
+  `transcript_blocks.text_search` live only in `baseline_schema.py`'s hand-written block, so
+  `SQLModel.metadata.create_all` never creates them and no search query can run without it. It is
+  opt-in rather than autouse because most tests don't need it, and it needs no teardown —
+  `transcript_embeddings` cascades off `transcript_blocks`, which `_reset_sql` already empties.
 - **No private per-file engine fixtures — use `clean_database`.** A file that builds its own
   in-memory SQLite engine has to overwrite the `db` globals, and with session-scoped patching a
   failure to restore them poisons every later test. SQLite also silently skips FK enforcement, which
