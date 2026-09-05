@@ -196,6 +196,15 @@ sed_inplace() {
     fi
 }
 
+# GNU and BSD stat share no compatible flags — `-c` is not even accepted on
+# macOS, so the usage error plus `set -e` aborts the whole script. Try GNU
+# first and fall back, rather than branching on `uname`: busybox stat is
+# GNU-shaped, so the flag a platform accepts is the thing worth probing.
+stat_field() {
+    local gnu_fmt="$1" bsd_fmt="$2" path="$3"
+    stat -c "$gnu_fmt" "$path" 2>/dev/null || stat -f "$bsd_fmt" "$path" 2>/dev/null
+}
+
 # Dev mode serves the UI on :3000 and the API on :8000, so every API call is
 # cross-origin. Opening the UI by any host other than localhost needs that host's
 # origin allowed or the browser blocks the whole app.
@@ -497,7 +506,27 @@ check_prerequisites() {
 
 # ── Step 2: Existing Files ─────────────────────────────────────────────────
 
+clear_stale_mount_dir() {
+    local path="$1"
+    [[ -d "$path" ]] || return 0
+
+    # Docker substitutes an empty directory for a missing bind-mount source, so a
+    # `docker compose up` run before setup leaves ./config.yml as a *directory* —
+    # which `-f` reports as absent, letting setup run to the `cat >` that then
+    # fails. Only an empty one is Docker's placeholder; anything else is real data.
+    if rmdir "$path" 2>/dev/null; then
+        print_warn "  Removed empty ${path}/ — a placeholder directory left by a bind mount."
+        return 0
+    fi
+
+    print_error "  ${path} is a non-empty directory, but setup must write it as a file."
+    echo "  Move or remove it, then re-run setup."
+    exit 1
+}
+
 check_existing_files() {
+    clear_stale_mount_dir "config.yml"
+
     local env_exists=0
     local config_exists=0
 
@@ -853,10 +882,13 @@ EOF
         print_warn "  Tighten it with: sudo chown 1000:1000 data/ && sudo chmod 775 data/"
     fi
 
+    # `|| true` for the same reason the chmod/chown attempts above carry it: this
+    # only decides whether to print a warning, so a stat that can't answer must
+    # not take the install down with it.
     local data_owner data_mode
-    data_owner="$(stat -c '%u' data)"
-    data_mode="$(stat -c '%a' data)"
-    if [[ "$data_owner" != "1000" ]] && (( (8#$data_mode & 2) == 0 )); then
+    data_owner="$(stat_field '%u' '%u' data || true)"
+    data_mode="$(stat_field '%a' '%Lp' data || true)"
+    if [[ -n "$data_mode" ]] && [[ "$data_owner" != "1000" ]] && (( (8#$data_mode & 2) == 0 )); then
         print_warn "  data/ is not writable by the container's user (uid 1000)."
         print_warn "  Fix it with: sudo chown 1000:1000 data/ && sudo chmod 775 data/"
     fi

@@ -11,14 +11,12 @@ type TagFilterProps = {
   onChange: (tagIds: number[]) => void
 }
 
-export function TagFilter({ allTags, selectedTagIds, onChange }: TagFilterProps) {
-  const [open, setOpen] = useState(false)
+/**
+ * The searchable tag checklist, without a trigger of its own, so it can also be
+ * rendered as one section of a larger filter popover (popovers don't nest).
+ */
+export function TagFilterBody({ allTags, selectedTagIds, onChange }: TagFilterProps) {
   const [search, setSearch] = useState("")
-
-  const handleOpenChange = (next: boolean) => {
-    if (next) setSearch("")
-    setOpen(next)
-  }
 
   const toggleTag = (id: number) => {
     if (selectedTagIds.includes(id)) {
@@ -28,17 +26,65 @@ export function TagFilter({ allTags, selectedTagIds, onChange }: TagFilterProps)
     }
   }
 
-  const selectedNames = allTags
-    .filter((t) => selectedTagIds.includes(t.id))
-    .map((t) => t.name)
-
   const filtered = useMemo(
     () => allTags.filter((t) => t.name.toLowerCase().includes(search.toLowerCase())),
     [allTags, search]
   )
 
   return (
-    <Popover open={open && allTags.length > 0} onOpenChange={handleOpenChange}>
+    <>
+      <div className="p-2 border-b border-border">
+        <input
+          type="text"
+          placeholder="Search tags..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full px-2 py-1 bg-bg-surface border border-border rounded text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-matrix/50"
+        />
+      </div>
+      <div className="max-h-56 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <div className="px-3 py-3 text-center text-xs font-mono text-text-muted">No matches</div>
+        ) : (
+          filtered.map((tag) => (
+            <button
+              key={tag.id}
+              onClick={() => toggleTag(tag.id)}
+              className={`w-full text-left px-3 py-1.5 text-xs font-mono transition-colors flex items-center gap-2 ${
+                selectedTagIds.includes(tag.id)
+                  ? "bg-matrix/10 text-matrix"
+                  : "text-text-primary hover:bg-bg-surface"
+              }`}
+            >
+              <span className={`w-3 h-3 rounded border shrink-0 flex items-center justify-center ${
+                selectedTagIds.includes(tag.id)
+                  ? "border-matrix bg-matrix"
+                  : "border-border"
+              }`}>
+                {selectedTagIds.includes(tag.id) && (
+                  <svg className="w-2 h-2 text-bg-base" viewBox="0 0 12 12" fill="currentColor">
+                    <path d="M10 3L4.5 8.5 2 6" stroke="currentColor" strokeWidth="2" fill="none" />
+                  </svg>
+                )}
+              </span>
+              {tag.name}
+            </button>
+          ))
+        )}
+      </div>
+    </>
+  )
+}
+
+export function TagFilter({ allTags, selectedTagIds, onChange }: TagFilterProps) {
+  const [open, setOpen] = useState(false)
+
+  const selectedNames = allTags
+    .filter((t) => selectedTagIds.includes(t.id))
+    .map((t) => t.name)
+
+  return (
+    <Popover open={open && allTags.length > 0} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
@@ -75,45 +121,7 @@ export function TagFilter({ allTags, selectedTagIds, onChange }: TagFilterProps)
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-56 p-0 overflow-hidden">
-        <div className="p-2 border-b border-border">
-          <input
-            type="text"
-            placeholder="Search tags..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full px-2 py-1 bg-bg-surface border border-border rounded text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-hidden focus:border-matrix/50"
-          />
-        </div>
-        <div className="max-h-56 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="px-3 py-3 text-center text-xs font-mono text-text-muted">No matches</div>
-          ) : (
-            filtered.map((tag) => (
-              <button
-                key={tag.id}
-                onClick={() => toggleTag(tag.id)}
-                className={`w-full text-left px-3 py-1.5 text-xs font-mono transition-colors flex items-center gap-2 ${
-                  selectedTagIds.includes(tag.id)
-                    ? "bg-matrix/10 text-matrix"
-                    : "text-text-primary hover:bg-bg-surface"
-                }`}
-              >
-                <span className={`w-3 h-3 rounded border shrink-0 flex items-center justify-center ${
-                  selectedTagIds.includes(tag.id)
-                    ? "border-matrix bg-matrix"
-                    : "border-border"
-                }`}>
-                  {selectedTagIds.includes(tag.id) && (
-                    <svg className="w-2 h-2 text-bg-base" viewBox="0 0 12 12" fill="currentColor">
-                      <path d="M10 3L4.5 8.5 2 6" stroke="currentColor" strokeWidth="2" fill="none" />
-                    </svg>
-                  )}
-                </span>
-                {tag.name}
-              </button>
-            ))
-          )}
-        </div>
+        <TagFilterBody allTags={allTags} selectedTagIds={selectedTagIds} onChange={onChange} />
       </PopoverContent>
     </Popover>
   )

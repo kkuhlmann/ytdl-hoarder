@@ -8,8 +8,6 @@ import { arrayMove } from "@dnd-kit/sortable"
 import {
   Bars2Icon,
   BookmarkIcon,
-  PlayIcon,
-  ArrowsRightLeftIcon,
 } from "@heroicons/react/20/solid"
 
 import { Button } from "@/components/ui/button"
@@ -18,7 +16,7 @@ import { CreatePlaylistDialog } from "@/app/_components/CreatePlaylistDialog"
 import { MediaListView } from "@/app/_components/media/MediaListView"
 import { positionColumn } from "@/app/_components/media/columns"
 import { ViewToggle } from "@/app/_components/ViewToggle"
-import { Switch } from "@/components/ui/switch"
+import { PlaybackControls } from "@/app/_components/PlaybackControls"
 import { useViewMode } from "@/app/_hooks/useViewMode"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import {
@@ -319,7 +317,7 @@ export function TagMixView({
 
   return (
     <>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden">
         <div className="flex items-center gap-3 shrink-0">
           <TagFilter
             allTags={allTags}
@@ -335,15 +333,6 @@ export function TagMixView({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <ViewToggle mode={viewMode} onChange={setViewMode} />
-          <label
-            className="flex items-center gap-2 cursor-pointer select-none"
-            title="Resume each track from where you left off, and show how far through each one you are"
-          >
-            <Switch checked={resumeEnabled} onCheckedChange={toggleResume} />
-            <span className="hidden sm:inline font-mono text-xs text-text-secondary">
-              Resume
-            </span>
-          </label>
           <Button
             variant="outline"
             size="sm"
@@ -355,26 +344,14 @@ export function TagMixView({
             <BookmarkIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Save as Playlist</span>
           </Button>
-          <Button
-            variant="matrix"
-            size="sm"
-            onClick={handlePlayAll}
+          <PlaybackControls
+            onPlayAll={handlePlayAll}
+            onShuffle={handleShuffle}
             disabled={media.length === 0}
-            className="gap-2"
-          >
-            <PlayIcon className="h-4 w-4" />
-            Play All
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleShuffle}
-            disabled={media.length === 0}
-            className="gap-2"
-          >
-            <ArrowsRightLeftIcon className="h-4 w-4" />
-            Shuffle
-          </Button>
+            playAllTitle="Play this mix in order"
+            shuffleTitle="Shuffle this mix"
+            resume={{ checked: resumeEnabled, onChange: toggleResume }}
+          />
         </div>
       </div>
 
