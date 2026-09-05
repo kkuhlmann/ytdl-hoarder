@@ -50,6 +50,24 @@ def docs_kwargs(serve_frontend: bool) -> dict[str, str | None]:
     return {}
 
 
+def cors_kwargs(origins: list[str]) -> dict[str, object]:
+    """CORSMiddleware kwargs for dev mode, where an empty allowlist means any origin.
+
+    Dev serves the UI on :3000 and the API on :8000, so every call is cross-origin and
+    the address the browser used is not knowable here — localhost, a LAN IP, a Tailscale
+    name. With no origins configured the regex echoes whatever arrives (and sets `Vary:
+    Origin`), which is what makes the dev UI work from any device unconfigured. Listing
+    origins restores a strict allowlist.
+    """
+    return {
+        'allow_origins': origins,
+        'allow_origin_regex': None if origins else '.*',
+        'allow_credentials': True,
+        'allow_methods': ['*'],
+        'allow_headers': ['*'],
+    }
+
+
 BANNER = r"""
      _______________/\/\____________/\/\__/\/\______________/\/\__________________________________________________/\/\_________________________
     _/\/\__/\/\__/\/\/\/\/\________/\/\__/\/\______________/\/\__________/\/\/\____/\/\/\______/\/\__/\/\________/\/\____/\/\/\____/\/\__/\/\_
@@ -182,14 +200,10 @@ if SERVE_FRONTEND:
     async def serve_spa(path: str):
         return FileResponse(resolve_spa_file(path))
 else:
-    # allow_origins=['*'] with allow_credentials=True makes Starlette echo the
-    # request Origin back and set Access-Control-Allow-Credentials, so any site
-    # could read API responses cross-origin. Only added in dev mode — the
-    # production image serves the frontend same-origin and needs no CORS at all.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.auth.allowed_origins,
-        allow_credentials=True,
-        allow_methods=['*'],
-        allow_headers=['*'],
-    )
+    # Dev only: the production image serves the frontend same-origin and never
+    # registers CORS at all. What actually keeps a foreign site from reading the
+    # API is the auth cookie's SameSite=lax (routers/auth.py), which withholds
+    # credentials from a cross-site fetch no matter what CORS permits — so the
+    # default here is open and auth.allowed_origins is a hardening option rather
+    # than the thing holding the door shut.
+    app.add_middleware(CORSMiddleware, **cors_kwargs(settings.auth.allowed_origins))

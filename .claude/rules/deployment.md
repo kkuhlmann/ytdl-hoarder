@@ -97,7 +97,7 @@ it silently does nothing in every containerized deployment. `.env` holds exactly
 `config.yml` because it's consumed outside the backend process: the two host media paths (Compose
 resolves the bind-mount source before the container exists), `YTDL_HOARDER_IMAGE`/`YTDL_HOARDER_TAG`
 (they name the image, so they must resolve before there is a container to configure),
-`NEXT_PUBLIC_BACKEND_API` and `ALLOWED_DEV_ORIGINS` (Next.js build/dev server), and
+`NEXT_PUBLIC_BACKEND_API` and `ALLOWED_DEV_ORIGINS` (the Next.js dev server), and
 `FORWARDED_ALLOW_IPS` (uvicorn itself, no `config.py` key). Everything else belongs in `config.yml`.
 
 `storage.audio_path`/`storage.video_path` are pinned to the compose mount *targets* (`/mnt/audio`,
@@ -109,6 +109,6 @@ it generates: both already equal the code defaults and both are traps if changed
 startup, nested Pydantic models for validation. Import with `from config import settings`.
 
 Three `.env` values that bite:
-- `NEXT_PUBLIC_BACKEND_API` — dev-mode only, **baked into the JS bundle at build time** (`docker-compose.dev.yml` build arg; default `http://localhost:8000`). Wrong for non-Docker-host access (LAN IP/domain) → every API call fails silently, including `/auth/setup-status`, so a fresh install falls back to the login page instead of showing setup. `setup.sh` prompts for this when launching dev mode. Prod and published hardcode `/api` in `Dockerfile.prod`, ignoring `.env` — unaffected.
-- `ALLOWED_DEV_ORIGINS` — comma-separated escape hatch for Next 16's `allowedDevOrigins` enforcement.
+- `NEXT_PUBLIC_BACKEND_API` — dev-mode only, and **normally empty**: `app/lib/api.ts` then derives the API origin from `window.location` at runtime, which is what lets one dev server answer on localhost, a LAN IP and a Tailscale name at once. It is a `docker-compose.dev.yml` **`environment:` entry, not a build arg** — deliberately, since an ARG→ENV bake is what used to force a `--build` (and a setup-time prompt) whenever the address changed. Set it only when the API isn't on :8000 of the browsed host (reverse proxy, TLS). Prod and published hardcode `/api` in `Dockerfile.prod` and are unaffected; `api.ts` also guards on `NODE_ENV === 'production'` so a prod build that somehow lost that ENV falls back to same-origin rather than to `:8000`.
+- `ALLOWED_DEV_ORIGINS` — comma-separated escape hatch for Next 16's `allowedDevOrigins` enforcement, now needed only for hosts no wildcard can match (single-label names, IPv6 literals).
 - `YTDL_HOARDER_TAG` — read **only** by `docker-compose.published.yml`, so setting it under prod or dev does nothing at all. `setup.sh --image-tag` writes it here rather than using it once, so a later `docker compose pull` stays on the release the user chose.
