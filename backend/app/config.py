@@ -152,10 +152,12 @@ class AuthSettings(BaseSettings):
         ),
     )
     allowed_origins: list[str] = Field(
-        default=['http://localhost:3000'],
+        default=[],
         description=(
-            'Origins allowed to make credentialed cross-origin API calls. Only used in '
-            'dev mode; the production image serves the frontend same-origin.'
+            'Origins allowed to make credentialed cross-origin API calls, dev mode only. '
+            'Empty allows any origin, so the dev UI works from any address without being '
+            'configured for it; list origins to enforce a strict allowlist instead. The '
+            'production image serves the frontend same-origin and ignores this.'
         ),
     )
 

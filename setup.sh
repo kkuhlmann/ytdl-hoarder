@@ -81,8 +81,6 @@ Options:
                               (default: ./ytdl-hoarder). Ignored inside a checkout.
   --compose-ref <ref>         Git ref to fetch the compose files from (default: main, or
                               the matching tag when --image-tag names a version)
-  --backend-host <host>       Hostname/IP for remote UI access. build-dev only; warned and
-                              ignored with --launch published or --launch build-prod
   -y, --yes                   Non-interactive: use defaults for any option not passed above
   -h, --help                  Show this help and exit
 
@@ -151,16 +149,6 @@ get_cpu_count() {
     fi
 }
 
-# Best-effort LAN IP detection, used as a suggested default (cross-platform).
-# Empty output is fine -- callers must handle it, not an error condition.
-get_lan_ip() {
-    if command -v ip &>/dev/null; then
-        ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -1
-    elif command -v ipconfig &>/dev/null; then
-        ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null
-    fi
-}
-
 # Download to a temp file and move into place. A compose file truncated by a
 # half-finished transfer fails far more confusingly than a missing one, and an
 # existing copy is backed up first so a hand-edited file is never lost silently.
@@ -187,15 +175,6 @@ fetch_file() {
     mv "${dest}.tmp" "$dest"
 }
 
-# Portable in-place sed (BSD sed on macOS needs -i '', GNU sed needs -i)
-sed_inplace() {
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "$@"
-    else
-        sed -i "$@"
-    fi
-}
-
 # GNU and BSD stat share no compatible flags — `-c` is not even accepted on
 # macOS, so the usage error plus `set -e` aborts the whole script. Try GNU
 # first and fall back, rather than branching on `uname`: busybox stat is
@@ -203,22 +182,6 @@ sed_inplace() {
 stat_field() {
     local gnu_fmt="$1" bsd_fmt="$2" path="$3"
     stat -c "$gnu_fmt" "$path" 2>/dev/null || stat -f "$bsd_fmt" "$path" 2>/dev/null
-}
-
-# Dev mode serves the UI on :3000 and the API on :8000, so every API call is
-# cross-origin. Opening the UI by any host other than localhost needs that host's
-# origin allowed or the browser blocks the whole app.
-add_allowed_origin() {
-    local origin="$1"
-    [[ -f config.yml ]] || return 0
-    if grep -qF -- "- ${origin}" config.yml; then
-        return 0
-    fi
-    awk -v entry="    - ${origin}" '
-        {print}
-        /^  allowed_origins:$/ {print entry}
-    ' config.yml > config.yml.tmp && mv config.yml.tmp config.yml
-    print_success "  Allowed ${origin} for cross-origin API calls (config.yml)"
 }
 
 # ── Argument Parsing ───────────────────────────────────────────────────────
@@ -234,7 +197,6 @@ parse_args() {
     ARG_IMAGE_TAG=""
     ARG_INSTALL_DIR=""
     ARG_COMPOSE_REF=""
-    ARG_BACKEND_HOST=""
     NON_INTERACTIVE=""
     LAUNCH_SYNONYM=""
 
@@ -327,11 +289,6 @@ parse_args() {
             --compose-ref)
                 [[ -n "${2:-}" ]] || { print_error "  --compose-ref requires a value"; exit 1; }
                 ARG_COMPOSE_REF="$2"
-                shift 2
-                ;;
-            --backend-host)
-                [[ -n "${2:-}" ]] || { print_error "  --backend-host requires a value"; exit 1; }
-                ARG_BACKEND_HOST="$2"
                 shift 2
                 ;;
             -y|--yes)
@@ -796,11 +753,15 @@ VIDEO_PATH=${VIDEO_PATH}
 YTDL_HOARDER_IMAGE=ghcr.io/kkuhlmann/ytdl-hoarder
 YTDL_HOARDER_TAG=${IMAGE_TAG}
 
-# Frontend API endpoint (dev mode only, used at Next.js build time)
-NEXT_PUBLIC_BACKEND_API=http://localhost:8000
+# Where the dev-mode frontend looks for the API. Leave empty: it then follows
+# whatever address you browsed to, so one dev server answers on localhost, a LAN
+# IP and a Tailscale name alike. Set it only if the API is not on :8000 of that
+# host -- behind a reverse proxy, or with TLS terminated in front.
+NEXT_PUBLIC_BACKEND_API=
 
-# Extra hostnames allowed to load Next.js dev resources. The host in
-# NEXT_PUBLIC_BACKEND_API is allowed automatically; comma-separated, dev only.
+# Extra hostnames allowed to load Next.js dev resources (hot reload). Every
+# dotted host is already allowed; this is for the ones no wildcard can match --
+# a single-label hostname (http://nas:3000) or an IPv6 literal. Comma-separated.
 ALLOWED_DEV_ORIGINS=
 
 # Set to your reverse proxy's address if one fronts the app, so per-client
@@ -835,10 +796,6 @@ auth:
   algorithm: HS256
   # Set true if you terminate HTTPS in front of the app.
   cookie_secure: false
-  # Dev mode calls the API cross-origin (:3000 -> :8000), so the UI's own origin
-  # must be listed here. Prod serves the frontend same-origin and ignores this.
-  allowed_origins:
-    - http://localhost:3000
 
 logging:
   level: INFO
@@ -892,35 +849,6 @@ EOF
         print_warn "  data/ is not writable by the container's user (uid 1000)."
         print_warn "  Fix it with: sudo chown 1000:1000 data/ && sudo chmod 775 data/"
     fi
-}
-
-# ── Step 6b: Remote Access Host ────────────────────────────────────────────
-
-# Applied here rather than in the launch step so `--launch none` still gets it:
-# "start it myself later" is deferred dev, and configuring without launching is
-# the whole point of the flag in a scripted setup.
-#
-# Both writes are dev-only, and inert rather than harmful under the two prod
-# modes: the prod image bakes NEXT_PUBLIC_BACKEND_API=/api at build time
-# (Dockerfile.prod) and takes the SERVE_FRONTEND branch in main.py, which never
-# registers the CORS middleware that reads auth.allowed_origins.
-apply_backend_host() {
-    [[ -n "$ARG_BACKEND_HOST" ]] || return 0
-
-    case "$ARG_LAUNCH" in
-        published|build-prod)
-            print_warn "  --backend-host is ignored in ${ARG_LAUNCH} mode: it serves the UI and"
-            print_warn "  API from one origin, so no API address or CORS entry is needed."
-            return 0
-            ;;
-    esac
-
-    print_header "Remote Access"
-
-    sed_inplace "s|^NEXT_PUBLIC_BACKEND_API=.*|NEXT_PUBLIC_BACKEND_API=http://${ARG_BACKEND_HOST}:8000|" .env
-    print_success "  Set NEXT_PUBLIC_BACKEND_API=http://${ARG_BACKEND_HOST}:8000 in .env"
-    add_allowed_origin "http://${ARG_BACKEND_HOST}:3000"
-    return 0
 }
 
 # ── Step 7: Launch ─────────────────────────────────────────────────────────
@@ -1064,52 +992,18 @@ launch_build_prod() {
 }
 
 launch_build_dev() {
-    echo "  If you'll only open ytdl-hoarder from this machine, you can skip this."
-    echo "  If you're running dev mode on a server and will connect from another"
-    echo "  device (phone, laptop, a domain) over the network, dev mode needs to"
-    echo "  know that address up front -- it's baked into the frontend at build"
-    echo "  time, so editing .env afterward won't take effect without a rebuild."
-    echo ""
-
-    local rebuild_flag=""
-    local backend_host=""
-    if [[ -n "$ARG_BACKEND_HOST" ]]; then
-        # Already written to .env/config.yml by apply_backend_host.
-        backend_host="$ARG_BACKEND_HOST"
-        print_success "  Remote access host: ${backend_host} (from --backend-host)"
-        rebuild_flag="--build"
-    elif [[ -n "$NON_INTERACTIVE" ]]; then
-        print_success "  Remote access: no (default)"
-    elif prompt_yes_no "Will you access the UI from a different device than this one?" "n"; then
-        echo ""
-        local suggested_ip
-        suggested_ip=$(get_lan_ip)
-        backend_host=$(prompt_with_default "Hostname or IP the browser will use to reach the API (port 8000)" "$suggested_ip")
-        while [[ -z "$backend_host" ]]; do
-            print_warn "  Please enter a hostname or IP."
-            backend_host=$(prompt_with_default "Hostname or IP the browser will use to reach the API (port 8000)" "")
-        done
-        sed_inplace "s|^NEXT_PUBLIC_BACKEND_API=.*|NEXT_PUBLIC_BACKEND_API=http://${backend_host}:8000|" .env
-        print_success "  Set NEXT_PUBLIC_BACKEND_API=http://${backend_host}:8000 in .env"
-        add_allowed_origin "http://${backend_host}:3000"
-        rebuild_flag="--build"
-    fi
-
-    echo ""
     echo "  Starting in dev mode..."
     echo ""
-    docker compose -f docker-compose.dev.yml up -d --remove-orphans $rebuild_flag
+    docker compose -f docker-compose.dev.yml up -d --remove-orphans
     LAUNCHED_MODE="build-dev"
     echo ""
     print_success "  Application started in dev mode!"
     echo ""
-    if [[ -n "$rebuild_flag" ]]; then
-        echo "  Frontend:  http://${backend_host}:3000"
-        echo "  API Docs:  http://${backend_host}:8000/docs"
-    else
-        echo "  Frontend:  http://localhost:3000"
-        echo "  API Docs:  http://localhost:8000/docs"
-    fi
+    echo "  Frontend:  http://localhost:3000"
+    echo "  API Docs:  http://localhost:8000/docs"
+    echo ""
+    echo "  Both are reachable at this machine's other addresses too -- a LAN IP,"
+    echo "  a Tailscale name, a domain -- with nothing further to configure."
     return 0
 }
 
@@ -1121,30 +1015,14 @@ print_start_later_hints() {
         return 0
     fi
 
-    local remote_configured=""
-    if [[ -n "$ARG_BACKEND_HOST" ]] && [[ "$ARG_LAUNCH" != "published" ]] \
-        && [[ "$ARG_LAUNCH" != "build-prod" ]]; then
-        remote_configured="1"
-    fi
-
     echo "  To start later, run one of:"
     echo ""
     echo -e "    ${BOLD}docker compose -f docker-compose.published.yml up -d${RESET}  # published release"
     echo -e "    ${BOLD}docker compose -f docker-compose.prod.yml up -d --build${RESET}  # build prod"
-    if [[ -n "$remote_configured" ]]; then
-        echo -e "    ${BOLD}docker compose -f docker-compose.dev.yml up -d --build${RESET}   # build dev"
-    else
-        echo -e "    ${BOLD}docker compose -f docker-compose.dev.yml up -d${RESET}   # build dev"
-    fi
+    echo -e "    ${BOLD}docker compose -f docker-compose.dev.yml up -d${RESET}   # build dev"
     echo ""
-    if [[ -n "$remote_configured" ]]; then
-        echo "  Dev mode needs --build the first time after setting a remote host:"
-        echo "  NEXT_PUBLIC_BACKEND_API is baked into the frontend image at build"
-        echo "  time, so a cached image would keep the old address."
-    else
-        echo "  Running dev mode on a server and opening the UI from another device?"
-        echo "  See the README's Configuration section for NEXT_PUBLIC_BACKEND_API."
-    fi
+    echo "  All three are reachable from any device on your network at whatever"
+    echo "  address this machine answers on -- there is nothing to configure for it."
     return 0
 }
 
@@ -1224,7 +1102,6 @@ main() {
     configure_transcription
     generate_jwt_secret
     write_config_files
-    apply_backend_host
     prompt_launch
     print_completion
 

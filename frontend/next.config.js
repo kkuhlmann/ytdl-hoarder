@@ -1,35 +1,29 @@
 /** @type {import('next').NextConfig} */
 
 // Next 16 blocks cross-origin requests to dev resources (/_next/*, HMR) unless
-// the origin is listed in allowedDevOrigins. This was advisory in Next 15 and
-// is enforced in 16, so anyone reaching the dev server as something other than
-// localhost -- a LAN IP, a Tailscale MagicDNS name, a reverse proxy -- loses
-// hot reload until their host is allowed.
+// the host matches allowedDevOrigins. This was advisory in Next 15 and is
+// enforced in 16. A same-origin page load carries no Origin header and is never
+// blocked, so what this actually governs is hot reload from another device.
 //
-// The hostname is derived from NEXT_PUBLIC_BACKEND_API, since the host you
-// reach the backend on is the host you reach the frontend on; setting that one
-// variable (which non-localhost access already requires) is therefore enough.
-// ALLOWED_DEV_ORIGINS, comma-separated, adds any extras. localhost is always
-// permitted and does not need listing. None of this affects the production
-// static export, which has no dev server.
+// A dev server cannot know which address a developer will browse to, so the list
+// is as wide as Next's matcher allows. "**.*" covers every IPv4 literal and every
+// dotted name -- a LAN hostname, .local, Tailscale MagicDNS, a domain. A bare "*"
+// or "**" matches NOTHING: matchWildcardDomain in
+// next/dist/server/app-render/csrf-protection rejects a single-segment wildcard
+// outright, so widening this by shortening the pattern would silently block
+// everything. Nothing can match a single-label host (http://nas:3000) or an IPv6
+// literal, which is what ALLOWED_DEV_ORIGINS is still here for. localhost is
+// always permitted by Next itself. The production static export has no dev
+// server and is unaffected.
+const DEV_ORIGIN_PATTERNS = ["**.*"]
+
 function devOrigins() {
-  const origins = new Set()
+  const extras = (process.env.ALLOWED_DEV_ORIGINS || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
 
-  const api = process.env.NEXT_PUBLIC_BACKEND_API
-  if (api) {
-    try {
-      origins.add(new URL(api).hostname)
-    } catch {
-      // Not a parseable URL — nothing to derive, fall through to the explicit list.
-    }
-  }
-
-  for (const entry of (process.env.ALLOWED_DEV_ORIGINS || "").split(",")) {
-    const host = entry.trim()
-    if (host) origins.add(host)
-  }
-
-  return [...origins]
+  return [...new Set([...DEV_ORIGIN_PATTERNS, ...extras])]
 }
 
 const nextConfig = {

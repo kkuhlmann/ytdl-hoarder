@@ -85,24 +85,25 @@ it from elsewhere, tunnel over SSH rather than republishing the port.
 These apply only to dev mode (`docker-compose.dev.yml`). The published and prod modes serve the UI
 and API from the same origin and are unaffected.
 
-**Setup/login page doesn't appear when opening the UI from another device.** The frontend is trying
-to reach the API at whatever `NEXT_PUBLIC_BACKEND_API` was baked in at build time — by default
-`http://localhost:8000`, which only resolves on the machine running Docker. Every API call, including
-the check for whether setup is needed, fails silently and the login page is shown instead of the
-setup page. Set `NEXT_PUBLIC_BACKEND_API` in `.env` to an address the browser can reach and rebuild
-the frontend (see [CONFIGURATION.md](CONFIGURATION.md)), or switch to
-`docker compose -f docker-compose.published.yml up -d`.
+Opening the dev UI from another device needs no configuration — the API address follows the address
+you browsed to. The failures below are what remains when something about the setup is unusual.
 
-**Requests fail with a CORS error after opening the UI from another device.** Dev mode serves the UI
-on port 3000 and the API on port 8000, so every call is cross-origin, and only origins listed in
-`auth.allowed_origins` (`config.yml`) may send credentials. Add the address you browse to, including
-the port — for example `http://192.168.1.50:3000` — and restart the backend.
+**Nothing loads and the browser console shows failed API calls, behind a reverse proxy or TLS.** The
+frontend assumes the API is on port 8000 of the host you browsed to. When it isn't, set
+`NEXT_PUBLIC_BACKEND_API` in `.env` to the address the browser should use and restart the frontend
+(`docker compose -f docker-compose.dev.yml up -d frontend` — no rebuild needed).
 
-**Hot reload stops working after opening the dev UI from another device.** Next.js 16 blocks
-cross-origin requests to dev resources and HMR unless the host is in the allowed list, so the page
-loads normally and simply never picks up edits. Set `NEXT_PUBLIC_BACKEND_API` in `.env` to the
-address you browse to and rebuild the frontend — the allowed list is derived from it. If the UI and
-API are on different hostnames, add the extras to `ALLOWED_DEV_ORIGINS` (comma-separated).
+**Requests fail with a CORS error.** `auth.allowed_origins` in `config.yml` is empty by default,
+which allows any origin; a CORS failure means it has been filled in. Either add the origin you browse
+to, including the port — `http://192.168.1.50:3000` — or empty the list again, then restart the
+backend.
+
+**Hot reload stops working when the UI is opened on a single-label hostname or an IPv6 literal.**
+Next.js 16 blocks cross-origin requests to dev resources and HMR unless the host is allowed, so the
+page loads normally and simply never picks up edits. Every dotted host is already allowed (LAN IPs,
+domains, Tailscale names); a bare name like `http://nas:3000` and an IPv6 literal are the two shapes
+no wildcard can match. Add them to `ALLOWED_DEV_ORIGINS` in `.env` (comma-separated, hostnames only)
+and restart the frontend service.
 
 ## Password recovery
 
