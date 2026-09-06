@@ -13,6 +13,17 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    # TypeScript is capped at 6.x. 7.0 is the Go port and ships no compiler API at
+    # all — its package exports only { version, versionMajorMinor } — so
+    # typescript-eslint, pulled in by eslint-config-next, reads versionMajorMinor at
+    # module load, throws on major >= 7, and `npm run lint` cannot start. Its peer
+    # range is >=4.8.4 <6.1.0. tsc, Vitest and `next build` all pass on 7.0; lint
+    # alone is the blocker. Upstream tracks TS >=7.1 in typescript-eslint#10940, so
+    # 7.0 will never be supported — drop this once typescript-eslint ships TS 7
+    # support. Minor and patch bumps within 6.x keep flowing.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   # Docker images at the root — Dockerfile.prod (python, uv, node) and
   # pgvector/pgvector:pg17 in the compose files.
