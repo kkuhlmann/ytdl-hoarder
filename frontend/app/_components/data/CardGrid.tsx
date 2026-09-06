@@ -6,6 +6,7 @@ import { motion } from "framer-motion"
 import { cn } from "@/lib/utils"
 import { LoadingSpinner } from "@/app/_components/LoadingSpinner"
 import { SortChips } from "@/app/_components/SortChips"
+import { useDelayedFlag } from "@/app/_hooks/useDelayedFlag"
 import type { SortDirection } from "@/app/types/DownloadsOptions"
 
 /** Shared by every card grid, so column counts stay consistent across surfaces. */
@@ -43,6 +44,9 @@ export function CardGrid<T>({
   sortOptions,
   className,
 }: CardGridProps<T>) {
+  // Spinner only after 500ms, so a fast refetch doesn't flash one.
+  const delayedLoading = useDelayedFlag(loading)
+
   const sortBar = onSort ? (
     <SortChips
       sortBy={sortBy ?? null}
@@ -53,7 +57,7 @@ export function CardGrid<T>({
     />
   ) : null
 
-  if (loading && rows.length === 0) {
+  if (delayedLoading) {
     return (
       <>
         {sortBar}

@@ -139,14 +139,12 @@ export function ClipsCard() {
     { enabled: search.length === 0 || search.length >= 3, pollMs: 10_000 }
   )
 
-  // Only a spinner while there are no stats to show: a 10s poll tick must not
-  // blank the numbers.
   const { isLoading: statsFetching, refetch: reloadStats } = useFetchEffect(
     loadStats,
     [loadStats],
     { pollMs: 10_000 }
   )
-  const statsLoading = stats === null && statsFetching
+  const statsLoading = statsFetching
 
   const handleInputChange = (event: { target: { value: string } }) => {
     setSearch(event.target.value)

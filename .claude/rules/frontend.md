@@ -32,6 +32,14 @@ paths:
 `hooks/useTaskProgress.ts` (SSE, auto-reconnect with backoff) lives in `app/hooks/`, everything else
 in `app/_hooks/`.
 
+**`useFetchEffect`'s `pollMs` runs are quiet: they never raise `isLoading`.** A poll tick refreshes
+data already on screen, so announcing it blanks a populated list every interval — and on a slow
+connection every fetch outlives `useDelayedFlag`'s 500ms grace, so the spinner is up more than it is
+down. Mount, a `deps` change and `refetch()` all stay loud, because `refetch` is only ever called
+from a user action (the Refresh button, or the reload after a delete/tag/retry). That is why no list
+surface needs its own `rows.length === 0` guard around the spinner — `isLoading` already means "the
+user asked for this".
+
 `useAudioAnalyser.ts` - Feeds the visualizer's `AnalyserNode` by routing the real `<audio>` element through `ctx.createMediaElementSource(el)` (per-element WeakMap-cached graph, since that call may run only ONCE per element; a parallel strong `liveGraphs` list closes contexts whose element has left the DOM, bounding live AudioContexts over a long session). **Desktop-only by design, and that gate IS the iOS protection:** `createMediaElementSource` reroutes the element's native output into the AudioContext, and on iOS the browser suspends that context on screen-lock → **silences lock-screen/background audio**, with no way to un-route the element. So `getOrCreateGraph` calls `isDesktop()` (UA-based iOS/iPadOS detection + `(pointer: coarse)`) and returns null on any iOS or touch device — no AudioContext is ever created there, the `<audio>` tag stays plain and untouched, and the visualizer simply stays inert. Tapping the element via `captureStream()` → `createMediaStreamSource` looks like a way to avoid the reroute and keep the graph everywhere; it is not, because WebKit doesn't implement `captureStream` — that route is desktop-only too, minus the explicit gate. **CORS:** the real `<audio>` still needs `crossOrigin="use-credentials"` (`MediaPlayer.tsx`) or a tainted cross-origin element yields zeroed frequency data. `ensureStarted()` (called from the visualizer toggle click) creates/resumes the graph inside a user gesture — outside one the context stays suspended and the audio routes into a silent graph; a `visibilitychange` + `pointerdown`/`touchend` effect resumes it after the browser auto-suspends on tab background. `enabled`/`isPlaying` are mirrored into refs from a **commit-phase effect**, not during render, so the rAF-driven `getBars`/`isActive` read fresh values without re-creating the memoized handle.
 
 ## Testing
