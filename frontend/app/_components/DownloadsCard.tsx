@@ -465,9 +465,7 @@ export function DownloadsCard({
     [loadStats],
     { pollMs: listActive ? 10_000 : null }
   )
-  // Only a spinner while there are no stats yet: a poll tick must not blank the
-  // numbers.
-  const statsLoading = stats === null && statsFetching
+  const statsLoading = statsFetching
 
   const handleRefresh = useCallback(() => {
     queuePool.current = null
