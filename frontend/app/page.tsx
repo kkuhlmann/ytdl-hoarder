@@ -13,6 +13,7 @@ import { useView } from "@/app/context/ViewContext"
 import axios from "axios"
 import { apiUrl, fetchPage, searchParam } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
+import { groupFilterParams } from "@/app/lib/groupFilter"
 import { SubscriptionsCard } from "@/app/_components/SubscriptionsCard"
 import { ClipsCard } from "@/app/_components/ClipsCard"
 import { PlaylistsCard } from "@/app/_components/PlaylistsCard"
@@ -172,19 +173,32 @@ export default function HomePage() {
       standard_search: string,
       semantic_search: string,
       semanticWeight: number,
+      filters: {
+        tagIds: number[]
+        minRating: number | null
+        groupFilter: GroupLeafFilter | null
+      },
     ) => {
       if (debounceTimeout.current) {
         clearTimeout(debounceTimeout.current)
       }
       return new Promise((resolve, reject) => {
         debounceTimeout.current = setTimeout(() => {
-          const params: { [key: string]: string | number | undefined } = {
+          const params: Record<string, string | number | boolean | undefined> = {
             semantic_search,
             semantic_weight: semanticWeight,
             ...adminParam,
+            ...groupFilterParams(filters.groupFilter),
           }
-          if (standard_search && standard_search.length >= 3) {
-            params.standard_search = standard_search
+          const standard = searchParam(standard_search)
+          if (standard) {
+            params.standard_search = standard
+          }
+          if (filters.tagIds.length > 0) {
+            params.tag_ids = filters.tagIds.join(",")
+          }
+          if (filters.minRating != null) {
+            params.min_rating = filters.minRating
           }
           axios
             .get(apiUrl(mediaApi.semanticSearch), { params })
@@ -229,15 +243,7 @@ export default function HomePage() {
       if (minRating != null) {
         params.min_rating = minRating
       }
-      if (groupFilter) {
-        if (groupFilter.channel != null) params.channel = groupFilter.channel
-        if (groupFilter.untagged) params.untagged = true
-        if (groupFilter.dateField && groupFilter.year != null) {
-          params.date_field = groupFilter.dateField
-          params.date_year = groupFilter.year
-          if (groupFilter.month != null) params.date_month = groupFilter.month
-        }
-      }
+      Object.assign(params, groupFilterParams(groupFilter))
       return fetchPage(mediaApi.list, params).catch((error) => {
         console.error("Failed to fetch job data", error)
         return { pageCount: 0, tableRows: [] }

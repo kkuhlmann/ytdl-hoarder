@@ -13,7 +13,7 @@ and is never read by the application; it holds only values consumed outside the 
 |---|---|---|
 | `AUDIO_ONLY_PATH`, `VIDEO_PATH` | Compose | Host media directories, resolved before the container exists |
 | `YTDL_HOARDER_IMAGE`, `YTDL_HOARDER_TAG` | Compose | Which image and release to run |
-| `NEXT_PUBLIC_BACKEND_API` | Next.js build | API URL compiled into the frontend bundle (dev mode only) |
+| `NEXT_PUBLIC_BACKEND_API` | Next.js dev server | Overrides the API address the dev UI calls (dev mode only; normally empty) |
 | `ALLOWED_DEV_ORIGINS` | Next.js dev server | Extra hosts permitted to reach dev resources |
 | `FORWARDED_ALLOW_IPS` | uvicorn | Proxy addresses whose `X-Forwarded-For` is trusted |
 
@@ -68,29 +68,33 @@ build-from-source modes ignore it.
 
 ## Dev-mode networking
 
-`NEXT_PUBLIC_BACKEND_API` tells the frontend where to find the API. It matters only in dev mode: it
-is compiled into the JS bundle at *build time*, not read at runtime, so editing `.env` alone has no
-effect until the frontend is rebuilt.
+**Dev mode needs no configuration to be reached from another device.** Open
+`http://<the-docker-host>:3000` from a phone, a laptop, a LAN IP, a Tailscale name or a domain and it
+works — nothing to declare up front, and no rebuild. Prod and published were always like this, since
+they call the API through a same-origin `/api` path; dev now matches them.
 
-If the UI is only ever opened from the machine running Docker, the default `http://localhost:8000` is
-correct and `setup.sh` does not prompt for it. When running dev mode on a server and connecting from
-another device (phone, laptop, LAN IP, domain), `setup.sh` asks for that address when dev mode is
-selected and rebuilds automatically. To set it manually later, edit `.env` and run:
+Three things make that true, and each has an escape hatch if your setup is unusual.
+
+**The API address follows your browser.** Dev serves the UI on port 3000 and the API on port 8000, so
+the frontend has to name a host. It derives one from the address you actually browsed to, so the same
+dev server answers correctly on every address the machine has. Set `NEXT_PUBLIC_BACKEND_API` in `.env`
+only when the API is *not* on port 8000 of that host — behind a reverse proxy, or with TLS terminated
+in front. It is read when the dev server starts, so a change takes effect on:
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d --build frontend
+docker compose -f docker-compose.dev.yml up -d frontend
 ```
 
-Setting it by hand also requires adding the address you browse to (port 3000) to
-`auth.allowed_origins` in `config.yml`. Dev mode calls the API cross-origin and only listed origins
-may send credentials. `setup.sh` adds it automatically.
+**Credentialed cross-origin calls are allowed from anywhere.** Because every dev API call is
+cross-origin, `auth.allowed_origins` in `config.yml` defaults to empty, which means any origin. The
+auth cookie is `SameSite=lax`, so a foreign website still cannot make a credentialed request to your
+API — that, rather than this list, is what keeps other sites out. To enforce a strict allowlist
+anyway, list full origins including the port (`http://192.168.1.50:3000`) and restart the backend.
+The production image serves the frontend same-origin and ignores the setting entirely.
 
-The same variable controls **hot reload** from another device. Next.js 16 blocks cross-origin
-requests to dev-server resources unless the host is explicitly allowed, so opening the dev UI as
-anything other than `localhost` — a LAN IP, a Tailscale name, a reverse proxy — otherwise leaves the
-page loading but never updating on edit. The allowed list is derived from `NEXT_PUBLIC_BACKEND_API`
-automatically. If the UI is reached on a different hostname than the API, add the extras to
-`ALLOWED_DEV_ORIGINS` in `.env` (comma-separated hostnames). `localhost` is always allowed.
-
-The published and prod modes have neither issue: they call the API through a same-origin `/api` path,
-so any address works with no configuration, and they are static exports with no dev server.
+**Hot reload works from any dotted host.** Next.js 16 refuses cross-origin requests to dev-server
+resources unless the host is allowed, which otherwise leaves the page loading but never updating on
+edit. Every dotted host is allowed — LAN IPs, `.local` names, Tailscale MagicDNS, domains — as is
+`localhost`. Two shapes cannot be covered by any wildcard Next accepts: a **single-label hostname**
+like `http://nas:3000`, and an **IPv6 literal**. Add those to `ALLOWED_DEV_ORIGINS` in `.env`
+(comma-separated, hostnames only — no scheme or port), then restart the frontend service.

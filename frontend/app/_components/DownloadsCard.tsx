@@ -5,7 +5,7 @@ import { useFetchEffect } from "@/app/_hooks/useFetchEffect"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { TrashIcon, BookOpenIcon, ArrowLeftIcon, MagnifyingGlassIcon, CalendarIcon, EyeIcon, ForwardIcon, ChevronDownIcon, PlayIcon, ArrowsRightLeftIcon } from "@heroicons/react/20/solid"
+import { BookOpenIcon, ArrowLeftIcon, MagnifyingGlassIcon, CalendarIcon, EyeIcon, ChevronDownIcon } from "@heroicons/react/20/solid"
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline"
 import { MediaListView } from "@/app/_components/media/MediaListView"
 import { GroupBySelector } from "@/app/_components/GroupBySelector"
@@ -19,7 +19,6 @@ import { useTriStateSort } from "@/app/_hooks/useTriStateSort"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import { MediaBulkActions } from "@/app/_components/media/MediaBulkActions"
 import { useMediaPlayer, LIBRARY_MIX_PLAYLIST_ID } from "@/app/context/MediaPlayerContext"
-import { cn } from "@/lib/utils"
 import { DownloadButton } from "./DownloadButton"
 import { TablePagination } from "@/app/_components/TablePagination"
 import { VideoPlayer } from "@/app/_components/MediaPlayer"
@@ -30,11 +29,11 @@ import { Download, DownloadOptionsType, SortDirection, MediaStats, TagInfo, Grou
 import type { PlaylistMedia } from "@/app/types/PlaylistOptions"
 import { TranscriptSegmentTable } from "./TranscriptSegmentTable"
 import { MediaStatsBar } from "./MediaStatsBar"
-import { TagFilter } from "./TagFilter"
-import { RatingFilter } from "./RatingFilter"
+import { FiltersPopover } from "./FiltersPopover"
+import { ScopeSelector } from "./ScopeSelector"
+import { PlaybackControls } from "./PlaybackControls"
 import { StarRating } from "./StarRating"
 import { Slider } from "@/components/ui/slider"
-import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { motion, AnimatePresence } from "framer-motion"
 import { formatDate } from "@/app/utils"
@@ -88,7 +87,12 @@ type DownloadsCardProps = {
   fetchTranscriptSegments: (
     standard_search: string,
     semantic_search: string,
-    semanticWeight: number
+    semanticWeight: number,
+    filters: {
+      tagIds: number[]
+      minRating: number | null
+      groupFilter: GroupLeafFilter | null
+    }
   ) => Promise<any>
   fetchStats: (search?: string, status?: string) => Promise<MediaStats>
   downloadOptions: DownloadOptionsType
@@ -130,20 +134,10 @@ export function DownloadsCard({
     leafKey: null,
     n: 1,
   })
-  // Both the rows and the page reset when the query changes — same
-  // value-plus-its-key derivation as `selectedIds` and `pageNumber` above.
-  const semanticKey = `${semanticSearch}|${search}|${semanticWeight}`
-  const semanticTableRows =
-    semanticState.key === semanticKey ? semanticState.rows : NO_SEMANTIC_ROWS
   const [semanticPage, setSemanticPage] = useState<{ key: string; n: number }>({
     key: "",
     n: 1,
   })
-  const semanticPageNumber = semanticPage.key === semanticKey ? semanticPage.n : 1
-  const setSemanticPageNumber = useCallback(
-    (n: number) => setSemanticPage({ key: semanticKey, n }),
-    [semanticKey]
-  )
   const SEMANTIC_PAGE_SIZE = 15
   const [stats, setStats] = useState<MediaStats | null>(null)
 
@@ -227,7 +221,7 @@ export function DownloadsCard({
 
   // "Group by" folder navigation for the grid view (COMPLETE status only)
   const grouping = useDownloadGrouping({
-    enabled: effectiveViewMode === "grid" && status === "COMPLETE" && !semanticSearch,
+    enabled: effectiveViewMode === "grid" && status === "COMPLETE",
     status,
     search,
     tagIds: selectedTagIds,
@@ -241,6 +235,30 @@ export function DownloadsCard({
   const setPageNumber = useCallback(
     (n: number) => setPage({ leafKey: grouping.leafKey, n }),
     [grouping.leafKey]
+  )
+
+  // Drilling into a tag folder overrides the tag chips, exactly as it does for the
+  // media list — see `loadDownloads`.
+  const effectiveTagIds = grouping.scope?.tagIds ?? selectedTagIds
+
+  // Both the rows and the page reset when the query changes — same
+  // value-plus-its-key derivation as `selectedIds` and `pageNumber` above. It
+  // carries the whole scope, not just the two search strings, so results fetched
+  // inside one folder are never shown under another.
+  const semanticKey = JSON.stringify([
+    semanticSearch,
+    search,
+    semanticWeight,
+    grouping.scopeKey,
+    effectiveTagIds,
+    minRating,
+  ])
+  const semanticTableRows =
+    semanticState.key === semanticKey ? semanticState.rows : NO_SEMANTIC_ROWS
+  const semanticPageNumber = semanticPage.key === semanticKey ? semanticPage.n : 1
+  const setSemanticPageNumber = useCallback(
+    (n: number) => setSemanticPage({ key: semanticKey, n }),
+    [semanticKey]
   )
 
   const [rowSelect, setRowSelect] = useState<{
@@ -386,14 +404,13 @@ export function DownloadsCard({
     // When drilled into a group folder, the leaf overrides the tag filter and adds
     // channel/untagged/date params so this reuses the normal paginated list path.
     const leaf = grouping.leaf
-    const effectiveTagIds = leaf?.tagIds ?? selectedTagIds
     return fetchDownloads(
       search,
       status,
       pageNumber,
       sortBy,
       sortDirection,
-      effectiveTagIds,
+      leaf ? effectiveTagIds : selectedTagIds,
       minRating,
       leaf?.filter ?? null
     )
@@ -420,6 +437,7 @@ export function DownloadsCard({
     pageNumber,
     sortBy,
     sortDirection,
+    effectiveTagIds,
     selectedTagIds,
     minRating,
     setPageNumber,
@@ -447,9 +465,7 @@ export function DownloadsCard({
     [loadStats],
     { pollMs: listActive ? 10_000 : null }
   )
-  // Only a spinner while there are no stats yet: a poll tick must not blank the
-  // numbers.
-  const statsLoading = stats === null && statsFetching
+  const statsLoading = statsFetching
 
   const handleRefresh = useCallback(() => {
     queuePool.current = null
@@ -757,17 +773,29 @@ export function DownloadsCard({
   // needing an effect to reset them.
   const { isLoading: semanticFetching } = useFetchEffect(
     () =>
-      fetchTranscriptSegments(search, semanticSearch, semanticWeight).then(
-        (rows: any[]) =>
-          setSemanticState({
-            key: semanticKey,
-            rows: rows.map((row: any) => ({
-              ...row,
-              media_details_id: row.media_details.id,
-            })),
-          })
+      fetchTranscriptSegments(search, semanticSearch, semanticWeight, {
+        tagIds: effectiveTagIds,
+        minRating,
+        groupFilter: grouping.scope?.filter ?? null,
+      }).then((rows: any[]) =>
+        setSemanticState({
+          key: semanticKey,
+          rows: rows.map((row: any) => ({
+            ...row,
+            media_details_id: row.media_details.id,
+          })),
+        })
       ),
-    [semanticKey, search, semanticSearch, semanticWeight, fetchTranscriptSegments],
+    [
+      semanticKey,
+      search,
+      semanticSearch,
+      semanticWeight,
+      effectiveTagIds,
+      minRating,
+      grouping.scope,
+      fetchTranscriptSegments,
+    ],
     { enabled: semanticSearch.length >= 3 }
   )
 
@@ -918,50 +946,23 @@ export function DownloadsCard({
         ) : (
           <>
             <CardHeader className="pb-3">
-              <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
+              <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden">
                 <div className="flex items-center flex-nowrap shrink-0 gap-1.5 sm:gap-3">
-                  <button
-                    onClick={() => {
-                      const newStatus = status === "SKIPPED" ? "COMPLETE" : "SKIPPED"
-                      setStatus(newStatus)
+                  <ScopeSelector
+                    value={status}
+                    onChange={(next) => {
+                      setStatus(next)
                       setPageNumber(1)
                     }}
-                    className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-xs font-mono transition-colors justify-center ${
-                      status === "SKIPPED"
-                        ? "bg-status-warning/20 text-status-warning border border-status-warning/30"
-                        : "bg-bg-surface text-text-muted hover:text-text-secondary border border-border"
-                    }`}
-                    title={status === "SKIPPED" ? "Viewing skipped media" : "Show skipped media"}
-                  >
-                    <ForwardIcon className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">{status === "SKIPPED" ? "Skipped" : "Show Skipped"}</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      const newStatus = status === "DELETED" ? "COMPLETE" : "DELETED"
-                      setStatus(newStatus)
-                      setPageNumber(1)
-                    }}
-                    className={`inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-md text-xs font-mono transition-colors justify-center ${
-                      status === "DELETED"
-                        ? "bg-status-error/20 text-status-error border border-status-error/30"
-                        : "bg-bg-surface text-text-muted hover:text-text-secondary border border-border"
-                    }`}
-                    title={status === "DELETED" ? "Viewing deleted media" : "Show deleted media"}
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">{status === "DELETED" ? "Deleted" : "Show Deleted"}</span>
-                  </button>
+                  />
                   {status === "COMPLETE" && (
                     <>
-                      <TagFilter
+                      <FiltersPopover
                         allTags={allTags}
                         selectedTagIds={selectedTagIds}
-                        onChange={(ids) => { setSelectedTagIds(ids); setPageNumber(1) }}
-                      />
-                      <RatingFilter
+                        onTagsChange={(ids) => { setSelectedTagIds(ids); setPageNumber(1) }}
                         minRating={minRating}
-                        onChange={(r) => { setMinRating(r); setPageNumber(1) }}
+                        onRatingChange={(r) => { setMinRating(r); setPageNumber(1) }}
                       />
                       <div className="flex items-center gap-1.5 sm:gap-3">
                         <Separator orientation="vertical" className="h-4" />
@@ -976,64 +977,17 @@ export function DownloadsCard({
                       {!semanticSearch && (
                         <div className="flex items-center gap-1.5 sm:gap-3">
                           <Separator orientation="vertical" className="h-4" />
-                          <label
-                            className={cn(
-                              "flex items-center gap-2 select-none",
-                              queueMode === "off"
-                                ? "cursor-pointer"
-                                : "cursor-not-allowed opacity-50"
-                            )}
-                            title={
-                              queueMode === "off"
-                                ? "Resume each track from where you left off, and show how far through each one you are"
-                                : "Play All and Shuffle always start each track from the beginning"
-                            }
-                          >
-                            <Switch
-                              checked={resumeActive}
-                              onCheckedChange={setResumeEnabled}
-                              disabled={queueMode !== "off"}
-                            />
-                            <span className="hidden sm:inline font-mono text-xs text-text-secondary">
-                              Resume
-                            </span>
-                          </label>
-                          <Button
-                            variant={queueMode === "ordered" ? "matrix" : "outline"}
-                            size="sm"
-                            onClick={handlePlayAll}
+                          <PlaybackControls
+                            queueMode={queueMode}
                             disabled={queueLoading}
-                            aria-pressed={queueMode === "ordered"}
-                            className="gap-2"
-                            title={
-                              queueMode === "ordered"
-                                ? "Stop after this track"
-                                : queueMode === "shuffled"
-                                  ? "Play the current queue in order"
-                                  : "Play everything matching the current filter"
-                            }
-                          >
-                            <PlayIcon className="h-4 w-4" />
-                            <span className="hidden sm:inline">Play All</span>
-                          </Button>
-                          <Button
-                            variant={queueMode === "shuffled" ? "matrix" : "outline"}
-                            size="sm"
-                            onClick={handleShuffle}
-                            disabled={queueLoading}
-                            aria-pressed={queueMode === "shuffled"}
-                            className="gap-2"
-                            title={
-                              queueMode === "shuffled"
-                                ? "Stop after this track"
-                                : queueMode === "ordered"
-                                  ? "Shuffle the current queue"
-                                  : "Shuffle everything matching the current filter"
-                            }
-                          >
-                            <ArrowsRightLeftIcon className="h-4 w-4" />
-                            <span className="hidden sm:inline">Shuffle</span>
-                          </Button>
+                            onPlayAll={handlePlayAll}
+                            onShuffle={handleShuffle}
+                            resume={{
+                              checked: resumeActive,
+                              disabled: queueMode !== "off",
+                              onChange: setResumeEnabled,
+                            }}
+                          />
                         </div>
                       )}
                     </>
@@ -1094,6 +1048,14 @@ export function DownloadsCard({
 
               <div className={semanticSearch || effectiveViewMode === "table" ? "md:rounded-lg md:border md:border-border overflow-hidden" : ""}>
                 {semanticSearch ? (
+                  <>
+                  {grouping.isGrouping && (
+                    <GroupBreadcrumb
+                      breadcrumb={grouping.breadcrumb}
+                      canGoUp={grouping.groupPath.length > 0}
+                      onGoUp={grouping.goUp}
+                    />
+                  )}
                   <TranscriptSegmentTable
                     tableColumns={TRANSCRIPT_TABLE_HEAD}
                     tableRows={semanticTableRows.slice(
@@ -1105,6 +1067,7 @@ export function DownloadsCard({
                     setDisplayVideo={showTranscriptVideo}
                     searchQuery={semanticSearch}
                   />
+                  </>
                 ) : effectiveViewMode === "grid" ? (
                   grouping.showFolders ? (
                     <GroupFolderGrid

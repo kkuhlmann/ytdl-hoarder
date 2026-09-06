@@ -44,6 +44,15 @@ from utils import get_model
 router = APIRouter()
 
 
+def _parse_tag_ids(tag_ids: str | None) -> list[int] | None:
+    """Parse the comma-separated tag_ids query param. Junk yields no filter, not a 422."""
+    if not tag_ids:
+        return None
+    with contextlib.suppress(ValueError):
+        return [int(t) for t in tag_ids.split(',') if t.strip()]
+    return None
+
+
 @router.get(
     '/stats',
     status_code=status.HTTP_200_OK,
@@ -101,10 +110,7 @@ async def get_media_groups_endpoint(
     search/tag/rating/access filters as the media list endpoint.
     """
 
-    parsed_tag_ids = None
-    if tag_ids:
-        with contextlib.suppress(ValueError):
-            parsed_tag_ids = [int(t) for t in tag_ids.split(',') if t.strip()]
+    parsed_tag_ids = _parse_tag_ids(tag_ids)
 
     try:
         return await md_repo.get_media_groups(
@@ -178,10 +184,7 @@ async def get_all_media_details(
         f'Router: get_all_media_details called with sort_by={sort_by}, sort_direction={sort_direction}'
     )
 
-    parsed_tag_ids = None
-    if tag_ids:
-        with contextlib.suppress(ValueError):
-            parsed_tag_ids = [int(t) for t in tag_ids.split(',') if t.strip()]
+    parsed_tag_ids = _parse_tag_ids(tag_ids)
 
     return await md_repo.get_all_media_details(
         search=search,
@@ -245,9 +248,24 @@ async def semantic_search(
     semantic_search: str,
     standard_search: str | None = None,
     semantic_weight: float = 0.5,
+    tag_ids: str | None = None,
+    min_rating: int | None = None,
+    channel: str | None = None,
+    untagged: bool = False,
+    date_field: str | None = None,
+    date_year: int | None = None,
+    date_month: int | None = None,
     model: OnnxEmbedder = Depends(get_model),
+    user_id: int = Depends(get_required_user_id),
     effective_user_id: int | None = Depends(get_effective_user_id),
 ):
+    """Search transcripts, narrowed to the media the library filter currently selects.
+
+    Takes the same filter params as the media list, so a group-folder drill-down,
+    tag chips and a minimum rating all scope the search. `status` is deliberately
+    absent: transcript search spans every status, and passing one would also swap the
+    access tier to owner-only for DELETED/SKIPPED.
+    """
     semantic_weight = max(0.0, min(1.0, semantic_weight))
 
     logger.debug(
@@ -260,6 +278,14 @@ async def semantic_search(
         standard_search,
         semantic_weight=semantic_weight,
         user_id=effective_user_id,
+        rating_user_id=user_id,
+        tag_ids=_parse_tag_ids(tag_ids),
+        min_rating=min_rating,
+        channel=channel,
+        untagged=untagged,
+        date_field=date_field,
+        date_year=date_year,
+        date_month=date_month,
     )
 
 

@@ -78,9 +78,14 @@ auth:
 
   # Origins allowed to make credentialed cross-origin API calls.
   # Dev mode only — the production image serves the frontend same-origin.
-  # Add your LAN IP or domain here if you open the dev UI from another device.
-  allowed_origins:
-    - http://localhost:3000
+  # Empty (the default) allows any origin, so the dev UI works from any device
+  # without being configured for it. What actually withholds credentials from a
+  # foreign site is the auth cookie's SameSite=lax, not this list. Fill it in to
+  # enforce a strict allowlist instead — full origins, including the port:
+  # allowed_origins:
+  #   - http://localhost:3000
+  #   - http://192.168.1.50:3000
+  allowed_origins: []
 
 # Logging configuration
 logging:

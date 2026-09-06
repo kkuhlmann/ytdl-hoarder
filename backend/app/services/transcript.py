@@ -5,12 +5,14 @@ import os
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil, floor
 
 from cachetools import TTLCache
 from sqlalchemy import text
 
+import repositories.media_details as md_repo
 import repositories.settings as settings_repo
 import repositories.task_records as task_repo
 import repositories.transcript_blocks as tb_repo
@@ -651,12 +653,6 @@ def _build_fts_query(search_query: str) -> str:
     return ' | '.join(_quote_tsquery_term(t) for t in terms)
 
 
-def _build_metadata_filter(prefix: str = '') -> str:
-    """Build optional metadata filter clause for standard_search."""
-    p = f'{prefix}.' if prefix else ''
-    return f'AND ({p}title ILIKE :search OR {p}channel ILIKE :search)'
-
-
 def _row_to_dict(row) -> dict:
     return {
         'transcript_block_id': row.transcript_block_id,
@@ -681,13 +677,80 @@ def _row_to_dict(row) -> dict:
     }
 
 
-def _build_user_access_filter(prefix: str = '') -> str:
-    """Build optional user access filter clause for media_access filtering."""
-    p = f'{prefix}.' if prefix else ''
-    # S608: `prefix` is a hardcoded table alias chosen by the caller, never user
-    # input, and the user id is bound as :user_id. Same for the three query
-    # builders below, whose only interpolations are these server-built clauses.
-    return f'AND {p}id IN (SELECT media_details_id FROM media_access WHERE user_id = :user_id)'  # noqa: S608
+@dataclass(frozen=True)
+class _MediaScope:
+    """The library filter, resolved into what the raw-SQL search queries splice in.
+
+    `exact` says the scope is small enough to compute every distance in it, which is
+    the only way to get full recall out of a filtered vector search (see
+    `_resolve_scope`).
+    """
+
+    subquery: str
+    params: dict
+    exact: bool
+    empty: bool
+
+
+# Above this many media a scoped vector search keeps using the HNSW index. Counted in
+# media rather than blocks because that count is one cheap query on the small table;
+# at ~100 blocks each this is ~100k blocks of exact distance work, and past it the
+# filter is no longer narrowing enough to beat the index.
+_EXACT_SCOPE_MEDIA_LIMIT = 1000
+
+
+async def _resolve_scope(**filters) -> _MediaScope | None:
+    """Resolve the library filter, or None when nothing is being filtered.
+
+    `include_owned` is set here rather than by the caller because it is never
+    optional for transcript search: a soft delete removes every MediaAccess row for
+    the media, the owner's included, so the access subquery alone would hide an
+    owner's own kept transcripts from them.
+    """
+    scope = md_repo.build_media_scope_subquery(**filters, include_owned=True)
+    if scope is None:
+        return None
+    subquery, params = scope
+    count = await md_repo.count_scoped_media(**filters, include_owned=True)
+    return _MediaScope(
+        subquery=subquery,
+        params=params,
+        exact=count <= _EXACT_SCOPE_MEDIA_LIMIT,
+        empty=count == 0,
+    )
+
+
+def _scope_clause(scope: _MediaScope | None) -> str:
+    """The scope as a WHERE fragment, keyed on the block rather than the media row.
+
+    `transcript_blocks.media_details_id` is NOT NULL with an FK, so this filters
+    identically to `md.id` while applying before the media_details join.
+    """
+    if scope is None:
+        return ''
+    # S608: the interpolated fragment is a SQLAlchemy-compiled SELECT carrying only
+    # named binds, never user text — every value travels in `scope.params`. Same for
+    # the three query builders below, whose only interpolations are these clauses.
+    return f'AND tb.media_details_id IN ({scope.subquery})'
+
+
+def _scoped_vector_cte(scope: _MediaScope, distance_param: str) -> str:
+    """Every in-scope distance, materialized.
+
+    AS MATERIALIZED is the whole point and must not be removed: it forbids the planner
+    from flattening this into the outer ORDER BY, which would let it answer from the
+    HNSW index and post-filter. pgvector's post-filter silently returns far fewer rows
+    than the LIMIT asks for — an empty result, not an error — whenever the scope is
+    narrow, which is exactly when someone has drilled into a group folder.
+    """
+    return f"""
+        scoped_vec AS MATERIALIZED (
+            SELECT te.transcript_block_id AS id, te.embedding <=> :{distance_param} AS dist
+            FROM transcript_embeddings te
+            JOIN transcript_blocks tb ON tb.id = te.transcript_block_id
+            WHERE tb.media_details_id IN ({scope.subquery})
+        )
+    """  # noqa: S608
 
 
 async def get_hybrid_search_results(
@@ -697,6 +760,14 @@ async def get_hybrid_search_results(
     semantic_weight: float = 0.5,
     limit: int = 100,
     user_id: int | None = None,
+    rating_user_id: int | None = None,
+    tag_ids: list[int] | None = None,
+    min_rating: int | None = None,
+    channel: str | None = None,
+    untagged: bool = False,
+    date_field: str | None = None,
+    date_year: int | None = None,
+    date_month: int | None = None,
 ) -> list[dict]:
     """
     Search transcript blocks using hybrid keyword + vector search with Reciprocal Rank Fusion.
@@ -706,48 +777,53 @@ async def get_hybrid_search_results(
     - 0.0: Pure keyword (native PostgreSQL FTS)
     - 0 < weight < 1: Hybrid RRF combining both rankings
 
+    Every filter beyond the two search strings narrows the candidate media the same way
+    the media list does, through `_build_media_conditions` — so `standard_search` here
+    means what it means in the Downloads box, `&&` / `||` operators included.
+
     Args:
-        user_id: Optional user ID to filter by media_access. None = no filter (admin view).
+        user_id: Optional user ID to filter by access. None = no filter (admin view).
     """
-    cache_key = (search_query, standard_search, limit, semantic_weight, user_id)
+    cache_key = (
+        search_query,
+        standard_search,
+        limit,
+        semantic_weight,
+        user_id,
+        rating_user_id,
+        tuple(tag_ids or ()),
+        min_rating,
+        channel,
+        untagged,
+        date_field,
+        date_year,
+        date_month,
+    )
     if cache_key in semantic_cache:
         return semantic_cache[cache_key]
 
-    metadata_filter_md = _build_metadata_filter('md')
-    metadata_clause = metadata_filter_md if standard_search else ''
-    access_clause = _build_user_access_filter('md') if user_id is not None else ''
+    scope = await _resolve_scope(
+        user_id=user_id,
+        search=standard_search,
+        rating_user_id=rating_user_id,
+        tag_ids=tag_ids,
+        min_rating=min_rating,
+        channel=channel,
+        untagged=untagged,
+        date_field=date_field,
+        date_year=date_year,
+        date_month=date_month,
+    )
+    # Nothing in scope: answer without paying for an embedding.
+    if scope is not None and scope.empty:
+        return []
 
     if semantic_weight == 1.0:
-        results = await _semantic_search(
-            model,
-            search_query,
-            standard_search,
-            metadata_clause,
-            limit,
-            access_clause=access_clause,
-            user_id=user_id,
-        )
+        results = await _semantic_search(model, search_query, limit, scope)
     elif semantic_weight == 0.0:
-        results = await _keyword_search(
-            model,
-            search_query,
-            standard_search,
-            metadata_clause,
-            limit,
-            access_clause=access_clause,
-            user_id=user_id,
-        )
+        results = await _keyword_search(model, search_query, limit, scope)
     else:
-        results = await _hybrid_rrf_search(
-            model,
-            search_query,
-            standard_search,
-            metadata_clause,
-            semantic_weight,
-            limit,
-            access_clause=access_clause,
-            user_id=user_id,
-        )
+        results = await _hybrid_rrf_search(model, search_query, semantic_weight, limit, scope)
 
     semantic_cache[cache_key] = results
     return results
@@ -756,45 +832,65 @@ async def get_hybrid_search_results(
 async def _semantic_search(
     model: OnnxEmbedder,
     search_query: str,
-    standard_search: str | None,
-    metadata_clause: str,
     limit: int,
-    access_clause: str = '',
-    user_id: int | None = None,
+    scope: _MediaScope | None = None,
 ) -> list[dict]:
     """Pure vector cosine similarity search."""
     query_embedding = model.encode([search_query], normalize_embeddings=True)[0]
     query_str = _embedding_to_pgvector_str(query_embedding.tolist())
 
-    sql = f"""
-        SELECT
-            tb.id as transcript_block_id,
-            tb.text,
-            tb.start_time,
-            tb.end_time,
-            md.id as md_id,
-            md.url,
-            md.title,
-            md.channel,
-            md.media_type,
-            md.status,
-            md.duration,
-            md.thumbnail_path,
-            1.0 - (te.embedding <=> :query) as score,
-            NULL::float as fts_rank
-        FROM transcript_embeddings te
-        JOIN transcript_blocks tb ON tb.id = te.transcript_block_id
-        JOIN media_details md ON md.id = tb.media_details_id
-        WHERE 1=1 {metadata_clause} {access_clause}
-        ORDER BY te.embedding <=> :query ASC
-        LIMIT :limit
-    """  # noqa: S608
+    if scope is not None and scope.exact:
+        sql = f"""
+            WITH {_scoped_vector_cte(scope, 'query')}
+            SELECT
+                tb.id as transcript_block_id,
+                tb.text,
+                tb.start_time,
+                tb.end_time,
+                md.id as md_id,
+                md.url,
+                md.title,
+                md.channel,
+                md.media_type,
+                md.status,
+                md.duration,
+                md.thumbnail_path,
+                1.0 - s.dist as score,
+                NULL::float as fts_rank
+            FROM scoped_vec s
+            JOIN transcript_blocks tb ON tb.id = s.id
+            JOIN media_details md ON md.id = tb.media_details_id
+            ORDER BY s.dist ASC
+            LIMIT :limit
+        """  # noqa: S608
+    else:
+        sql = f"""
+            SELECT
+                tb.id as transcript_block_id,
+                tb.text,
+                tb.start_time,
+                tb.end_time,
+                md.id as md_id,
+                md.url,
+                md.title,
+                md.channel,
+                md.media_type,
+                md.status,
+                md.duration,
+                md.thumbnail_path,
+                1.0 - (te.embedding <=> :query) as score,
+                NULL::float as fts_rank
+            FROM transcript_embeddings te
+            JOIN transcript_blocks tb ON tb.id = te.transcript_block_id
+            JOIN media_details md ON md.id = tb.media_details_id
+            WHERE 1=1 {_scope_clause(scope)}
+            ORDER BY te.embedding <=> :query ASC
+            LIMIT :limit
+        """  # noqa: S608
 
     params: dict = {'query': query_str, 'limit': limit}
-    if standard_search:
-        params['search'] = f'%{standard_search}%'
-    if user_id is not None:
-        params['user_id'] = user_id
+    if scope is not None:
+        params.update(scope.params)
 
     async with db.get_async_session() as session:
         result = await session.execute(text(sql), params)
@@ -806,11 +902,8 @@ async def _semantic_search(
 async def _keyword_search(
     model: OnnxEmbedder,
     search_query: str,
-    standard_search: str | None,
-    metadata_clause: str,
     limit: int,
-    access_clause: str = '',
-    user_id: int | None = None,
+    scope: _MediaScope | None = None,
 ) -> list[dict]:
     """Pure keyword search via native PostgreSQL FTS. Ranked by ts_rank_cd, display score is cosine similarity."""
     query_embedding = model.encode([search_query], normalize_embeddings=True)[0]
@@ -823,9 +916,8 @@ async def _keyword_search(
                 tb.id,
                 ts_rank_cd(tb.text_search, to_tsquery('english', :fts_query)) AS fts_rank
             FROM transcript_blocks tb
-            JOIN media_details md ON md.id = tb.media_details_id
             WHERE tb.text_search @@ to_tsquery('english', :fts_query)
-                {metadata_clause} {access_clause}
+                {_scope_clause(scope)}
             ORDER BY fts_rank DESC
             LIMIT :limit
         )
@@ -852,10 +944,8 @@ async def _keyword_search(
     """  # noqa: S608
 
     params: dict = {'fts_query': fts_query, 'embedding': query_str, 'limit': limit}
-    if standard_search:
-        params['search'] = f'%{standard_search}%'
-    if user_id is not None:
-        params['user_id'] = user_id
+    if scope is not None:
+        params.update(scope.params)
 
     async with db.get_async_session() as session:
         result = await session.execute(text(sql), params)
@@ -867,12 +957,9 @@ async def _keyword_search(
 async def _hybrid_rrf_search(
     model: OnnxEmbedder,
     search_query: str,
-    standard_search: str | None,
-    metadata_clause: str,
     semantic_weight: float,
     limit: int,
-    access_clause: str = '',
-    user_id: int | None = None,
+    scope: _MediaScope | None = None,
 ) -> list[dict]:
     """Hybrid search using RRF for ranking, cosine similarity for display score."""
     query_embedding = model.encode([search_query], normalize_embeddings=True)[0]
@@ -882,18 +969,32 @@ async def _hybrid_rrf_search(
     keyword_weight = 1.0 - semantic_weight
     candidate_limit = limit * 3  # Fetch more candidates for better fusion
 
+    if scope is not None and scope.exact:
+        vector_cte = f"""
+            {_scoped_vector_cte(scope, 'embedding')},
+            vector_search AS (
+                SELECT id, ROW_NUMBER() OVER (ORDER BY dist) AS rank
+                FROM scoped_vec
+                ORDER BY dist ASC
+                LIMIT :candidate_limit
+            )
+        """  # noqa: S608
+    else:
+        vector_cte = f"""
+            vector_search AS (
+                SELECT
+                    te.transcript_block_id AS id,
+                    ROW_NUMBER() OVER (ORDER BY te.embedding <=> :embedding) AS rank
+                FROM transcript_embeddings te
+                JOIN transcript_blocks tb ON tb.id = te.transcript_block_id
+                WHERE 1=1 {_scope_clause(scope)}
+                ORDER BY te.embedding <=> :embedding ASC
+                LIMIT :candidate_limit
+            )
+        """  # noqa: S608
+
     sql = f"""
-        WITH vector_search AS (
-            SELECT
-                te.transcript_block_id AS id,
-                ROW_NUMBER() OVER (ORDER BY te.embedding <=> :embedding) AS rank
-            FROM transcript_embeddings te
-            JOIN transcript_blocks tb ON tb.id = te.transcript_block_id
-            JOIN media_details md ON md.id = tb.media_details_id
-            WHERE 1=1 {metadata_clause} {access_clause}
-            ORDER BY te.embedding <=> :embedding ASC
-            LIMIT :candidate_limit
-        ),
+        WITH {vector_cte},
         keyword_search AS (
             SELECT
                 tb.id,
@@ -902,9 +1003,8 @@ async def _hybrid_rrf_search(
                     ORDER BY ts_rank_cd(tb.text_search, to_tsquery('english', :fts_query)) DESC
                 ) AS rank
             FROM transcript_blocks tb
-            JOIN media_details md ON md.id = tb.media_details_id
             WHERE tb.text_search @@ to_tsquery('english', :fts_query)
-                {metadata_clause} {access_clause}
+                {_scope_clause(scope)}
             ORDER BY fts_rank DESC
             LIMIT :candidate_limit
         )
@@ -928,7 +1028,8 @@ async def _hybrid_rrf_search(
         JOIN transcript_embeddings te ON te.transcript_block_id = tb.id
         LEFT JOIN vector_search v ON tb.id = v.id
         LEFT JOIN keyword_search k ON tb.id = k.id
-        WHERE v.id IS NOT NULL OR k.id IS NOT NULL
+        WHERE (v.id IS NOT NULL OR k.id IS NOT NULL)
+            {_scope_clause(scope)}
         ORDER BY
             :semantic_weight * COALESCE(1.0 / (60 + v.rank), 0.0) +
             :keyword_weight * COALESCE(1.0 / (60 + k.rank), 0.0) DESC
@@ -943,10 +1044,8 @@ async def _hybrid_rrf_search(
         'candidate_limit': candidate_limit,
         'limit': limit,
     }
-    if standard_search:
-        params['search'] = f'%{standard_search}%'
-    if user_id is not None:
-        params['user_id'] = user_id
+    if scope is not None:
+        params.update(scope.params)
 
     async with db.get_async_session() as session:
         result = await session.execute(text(sql), params)

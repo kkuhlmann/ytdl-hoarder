@@ -80,25 +80,6 @@ prompt_yes_no() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
-# Portable in-place sed (BSD sed on macOS needs -i '', GNU sed needs -i).
-sed_inplace() {
-    if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' "$@"
-    else
-        sed -i "$@"
-    fi
-}
-
-# Value of KEY= in .env, empty if absent. Last occurrence wins, matching how
-# docker compose reads the file.
-env_value() {
-    [[ -f "$REPO_ROOT/.env" ]] || return 0
-    grep -E "^$1=" "$REPO_ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2-
-}
-
-# Hostname out of a URL: strip scheme, then port/path.
-url_host() { echo "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#[:/?].*$##'; }
-
 # Is $2 a directory already present on the PATH string $1?
 path_contains() {
     case ":$1:" in
@@ -273,98 +254,6 @@ setup_deno() {
     fi
 }
 
-# ── Dev server access (cross-origin) ─────────────────────────────────────────
-# Next 16 refuses cross-origin requests to dev resources (/_next/*, HMR), so
-# opening the dev UI as anything but localhost needs that host allowed or hot
-# reload dies with a 403 -- which presents as "the dev server broke", not as a
-# config error. Contributors on a remote dev box hit this immediately.
-#
-# next.config.js derives the allowed host from NEXT_PUBLIC_BACKEND_API, so the
-# common case is already handled by setup.sh and this step just confirms it.
-#
-# Ownership split, deliberately: NEXT_PUBLIC_BACKEND_API is baked into the JS
-# bundle at build time and changing it needs a rebuild, so setup.sh owns it and
-# we only report it here. ALLOWED_DEV_ORIGINS is read at dev-server startup,
-# needs no rebuild, and setup.sh does not touch it -- so it is safe for this
-# script to write. Two writers for one variable would just drift.
-
-setup_dev_origin() {
-    print_header "Dev server access (hot reload)"
-
-    if [[ ! -f "$REPO_ROOT/.env" ]]; then
-        print_warn "  No .env yet -- the app needs one before it can run."
-        echo "  Create it with:  bash setup.sh"
-        add_summary "dev origin ......... no .env yet (run setup.sh)"
-        return
-    fi
-
-    local api_host extra
-    api_host=$(url_host "$(env_value NEXT_PUBLIC_BACKEND_API)")
-    extra=$(env_value ALLOWED_DEV_ORIGINS)
-
-    local allowed="$api_host"
-    [[ -n "$extra" ]] && allowed="$api_host, $extra"
-
-    if [[ -z "$api_host" || "$api_host" == "localhost" || "$api_host" == "127.0.0.1" ]]; then
-        print_success "  Dev UI expected at localhost -- no cross-origin config needed."
-    else
-        print_success "  Hot reload allowed for: ${allowed}"
-    fi
-
-    echo ""
-    echo -e "  ${DIM}Opening the dev UI by any other hostname (LAN IP, Tailscale name,"
-    echo -e "  a domain) needs that host added, or hot reload stops working.${RESET}"
-    echo ""
-
-    if ! prompt_yes_no "Add another hostname for hot reload?" "n"; then
-        add_summary "dev origin ......... ${allowed:-localhost}"
-        return
-    fi
-
-    echo ""
-    local host
-    host=$(hostname -f 2>/dev/null || hostname 2>/dev/null)
-    echo -en "  Hostname the browser will use ${DIM}[${host:-none}]${RESET}: "
-    read -r answer
-    answer="${answer:-$host}"
-    answer="${answer// /}"
-
-    if [[ -z "$answer" ]]; then
-        print_warn "  Nothing entered -- skipped."
-        add_summary "dev origin ......... ${allowed:-localhost}"
-        return
-    fi
-
-    # Hostnames only: a scheme or port here silently fails to match at runtime.
-    answer=$(url_host "$answer")
-
-    # This script is advertised as safe to re-run, so adding a host twice must
-    # not keep growing the list. (next.config.js dedupes too, but .env is what
-    # a human reads.)
-    if [[ "$answer" == "$api_host" ]] || [[ ",${extra}," == *",${answer},"* ]]; then
-        print_success "  ${answer} is already allowed -- nothing to do."
-        add_summary "dev origin ......... ${allowed}"
-        return
-    fi
-
-    local updated
-    if [[ -n "$extra" ]]; then
-        updated="${extra},${answer}"
-    else
-        updated="$answer"
-    fi
-
-    if grep -qE '^ALLOWED_DEV_ORIGINS=' "$REPO_ROOT/.env"; then
-        sed_inplace "s|^ALLOWED_DEV_ORIGINS=.*|ALLOWED_DEV_ORIGINS=${updated}|" "$REPO_ROOT/.env"
-    else
-        printf '\nALLOWED_DEV_ORIGINS=%s\n' "$updated" >> "$REPO_ROOT/.env"
-    fi
-
-    print_success "  Added ${answer} to ALLOWED_DEV_ORIGINS in .env"
-    echo -e "  ${DIM}Takes effect on the next 'task dev' -- no rebuild needed.${RESET}"
-    add_summary "dev origin ......... ${api_host}, ${updated}"
-}
-
 # ── PATH guidance ────────────────────────────────────────────────────────────
 # We run in a subshell and cannot change the parent shell's PATH; advise instead.
 
@@ -419,7 +308,6 @@ main() {
     setup_node
     setup_task
     setup_deno
-    setup_dev_origin
     path_guidance
     print_completion
 }

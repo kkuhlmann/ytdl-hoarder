@@ -5,7 +5,12 @@ import { DependencyList, useCallback, useEffect, useRef, useState } from "react"
 type FetchEffectOptions = {
   /** While false, nothing runs and `isLoading` keeps whatever it last held. */
   enabled?: boolean
-  /** Also re-run on this interval. null (the default) means no polling. */
+  /**
+   * Also re-run on this interval. null (the default) means no polling.
+   *
+   * Poll runs are quiet: they never raise `isLoading`, so a background refresh
+   * cannot blank a list that already has rows.
+   */
   pollMs?: number | null
   /** What `isLoading` reads before the first run commits. */
   initialLoading?: boolean
@@ -59,22 +64,33 @@ export function useFetchEffect(
   // that a newer run just set.
   const runIdRef = useRef(0)
 
+  // Marks the next run as poll-triggered. Both triggers share one nonce, so the
+  // effect has no other way to tell them apart.
+  const quietRef = useRef(false)
+
   const refetch = useCallback(() => setRefetchNonce((n) => n + 1), [])
 
+  // A poll tick refreshes data the user is already looking at. Raising the
+  // loading flag for it blanks a populated list every interval, which on a slow
+  // connection is most of the time.
+  const pollRefetch = useCallback(() => {
+    quietRef.current = true
+    setRefetchNonce((n) => n + 1)
+  }, [])
+
   useEffect(() => {
+    const quiet = quietRef.current
+    quietRef.current = false
+
     if (!enabled) return
 
     const controller = new AbortController()
     const runId = ++runIdRef.current
 
-    // The one setState-in-effect in the frontend that is left standing on
-    // purpose. React treats data fetching as a legitimate effect and this is
-    // the loading flag for one — there is nothing to derive it from, since it
-    // describes an in-flight request rather than any rendered value. Every
-    // data-fetch call site routes through here so this stays a single
-    // documented exception instead of ~20 scattered ones.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIsLoading(true)
+    // Nothing to derive this from: it describes an in-flight request rather
+    // than any rendered value. Every data-fetch call site routes through here
+    // so that stays one setState-in-effect instead of ~20 scattered ones.
+    if (!quiet) setIsLoading(true)
 
     let started: Promise<unknown>
     try {
@@ -92,6 +108,8 @@ export function useFetchEffect(
         }
       })
       .finally(() => {
+        // Runs for quiet runs too: a poll that supersedes a user-initiated run
+        // inherits responsibility for clearing the flag that run raised.
         if (runId === runIdRef.current) setIsLoading(false)
       })
 
@@ -102,9 +120,9 @@ export function useFetchEffect(
 
   useEffect(() => {
     if (!enabled || pollMs == null) return
-    const intervalId = setInterval(refetch, pollMs)
+    const intervalId = setInterval(pollRefetch, pollMs)
     return () => clearInterval(intervalId)
-  }, [enabled, pollMs, refetch])
+  }, [enabled, pollMs, pollRefetch])
 
   return { isLoading, refetch }
 }

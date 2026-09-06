@@ -2,7 +2,8 @@
 
 This guide covers setting up a local development environment and the checks a pull request
 has to pass. For end-user installation, see [`README.md`](README.md). For architecture, task
-orchestration, and the reasoning behind non-obvious choices, see [`AGENTS.md`](AGENTS.md).
+orchestration, and the reasoning behind non-obvious choices, see [`AGENTS.md`](AGENTS.md) and the
+area-specific deep dives it indexes in [`.claude/rules/`](.claude/rules).
 
 ## Prerequisites
 
@@ -96,8 +97,8 @@ Unlike the backend ones, the `task frontend:*` targets fall back to running insi
 
 Frontend tests use [Vitest](https://vitest.dev/) and are co-located next to their source as
 `*.test.ts` / `*.test.tsx`. The default environment is `node`; a test that touches the DOM opts in
-per-file with a `// @vitest-environment jsdom` docblock on its first line. See the Testing section of
-[`AGENTS.md`](AGENTS.md) for the rest of the conventions.
+per-file with a `// @vitest-environment jsdom` docblock on its first line. See
+[`.claude/rules/frontend.md`](.claude/rules/frontend.md) for the rest of the conventions.
 
 ## Code style
 

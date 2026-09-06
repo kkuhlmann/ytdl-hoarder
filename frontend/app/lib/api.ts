@@ -1,13 +1,25 @@
 /**
  * API URL utility for handling dev vs production environments.
  *
- * In development: NEXT_PUBLIC_BACKEND_API points to the backend container (e.g., http://localhost:8000)
- * In production: NEXT_PUBLIC_BACKEND_API is /api (or empty), and FastAPI serves both API and static files
+ * Production bakes NEXT_PUBLIC_BACKEND_API=/api (Dockerfile.prod) and FastAPI serves
+ * the API and the static export from one origin. Dev leaves it unset and follows the
+ * browser's own address, so a single dev server answers on localhost, a LAN IP or a
+ * Tailscale name without a rebuild. Set the variable to override that -- a reverse
+ * proxy or TLS termination, where the API is not on :8000 of the host you browse to.
  */
 
 import axios from "axios"
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_API || ''
+const DEV_API_PORT = "8000"
+
+function apiBase(): string {
+  const configured = process.env.NEXT_PUBLIC_BACKEND_API
+  if (configured) return configured
+  // No window during the static-export prerender or the node-env unit tests, and
+  // same-origin is the right answer for a production build either way.
+  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return ""
+  return `${window.location.protocol}//${window.location.hostname}:${DEV_API_PORT}`
+}
 
 // Send cookies with all requests (auth_token cookie)
 axios.defaults.withCredentials = true
@@ -30,10 +42,10 @@ axios.interceptors.response.use(
 /**
  * Constructs a full API URL from a path.
  * @param path - The API path (should start with /)
- * @returns The full URL (e.g., "http://localhost:8000/subscriptions" or "/api/subscriptions")
+ * @returns The full URL (e.g., "http://192.168.1.50:8000/subscriptions" or "/api/subscriptions")
  */
 export function apiUrl(path: string): string {
-  return `${API_BASE}${path}`
+  return `${apiBase()}${path}`
 }
 
 /**

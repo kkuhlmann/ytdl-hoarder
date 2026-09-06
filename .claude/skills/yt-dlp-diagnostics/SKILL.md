@@ -151,4 +151,4 @@ Checks below state *requirements*, not today's pinned values — pinned versions
 - `backend/app/ytdlp/options.py` `_throttling_options` — the throttling knobs' single conversion point for downloads; `ytdlp/info.py` sets `sleep_interval_requests` separately for metadata
 - `backend/app/tasks/downloads.py:723` (cookie/attempt branch), `:734` (the `attempt=/clients=` log line — the phase marker), `:800-808` (the catch-all that turns a 403 into a retry)
 - `backend/app/ytdlp/info.py` — `is_video_ready_for_download` + `_has_downloadable_formats` release-detection gate (live/upcoming defer; post-live defers only when no downloadable formats yet)
-- `AGENTS.md:384-419` (`## yt-dlp Configuration`), `README.md:186`, `docs/TROUBLESHOOTING.md:36-46` — existing condensed notes (this skill goes deeper)
+- `.claude/rules/ytdlp.md` (`# yt-dlp configuration`), `AGENTS.md` (`## yt-dlp Configuration`), `README.md:186`, `docs/TROUBLESHOOTING.md:36-46` — existing condensed notes (this skill goes deeper)

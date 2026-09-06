@@ -70,3 +70,15 @@ def test_every_query_builder_projects_what_the_assembler_reads():
         source = inspect.getsource(builder)
         for column in ('md.duration', 'md.thumbnail_path'):
             assert column in source, f'{builder.__name__} does not project {column}'
+
+
+def test_semantic_search_projects_the_media_fields_on_both_paths():
+    """_semantic_search carries two SELECTs — the exact scoped one and the index one.
+
+    A column added to only one of them raises AttributeError for whichever scope size
+    the user happens to land on, which is the same trap the test above guards.
+    """
+    source = inspect.getsource(_semantic_search)
+
+    for column in ('md.duration', 'md.thumbnail_path'):
+        assert source.count(column) == 2, f'_semantic_search projects {column} on only one path'

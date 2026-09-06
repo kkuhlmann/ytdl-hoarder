@@ -10,8 +10,6 @@ import {
   ChevronDoubleUpIcon,
   ChevronDoubleDownIcon,
   MinusCircleIcon,
-  PlayIcon,
-  ArrowsRightLeftIcon,
 } from "@heroicons/react/20/solid"
 import { TrashIcon as TrashOutlineIcon } from "@heroicons/react/24/outline"
 
@@ -24,7 +22,7 @@ import {
 import { ConfirmDialog } from "@/app/_components/ConfirmDialog"
 import { positionColumn } from "@/app/_components/media/columns"
 import { ViewToggle } from "@/app/_components/ViewToggle"
-import { Switch } from "@/components/ui/switch"
+import { PlaybackControls } from "@/app/_components/PlaybackControls"
 import { useViewMode } from "@/app/_hooks/useViewMode"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import type { ActionDescriptor } from "@/app/_components/data/ActionList"
@@ -301,24 +299,14 @@ export function PlaylistDetailView({
     <>
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
         <div className="flex items-center gap-2">
-          <Button variant="matrix" size="sm" onClick={handlePlayAll} className="gap-1.5">
-            <PlayIcon className="h-4 w-4" />
-            Play All
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleShufflePlay} className="gap-1.5">
-            <ArrowsRightLeftIcon className="h-4 w-4" />
-            Shuffle
-          </Button>
+          <PlaybackControls
+            onPlayAll={handlePlayAll}
+            onShuffle={handleShufflePlay}
+            playAllTitle="Play this playlist in order"
+            shuffleTitle="Shuffle this playlist"
+            resume={{ checked: resumeEnabled, onChange: toggleResume }}
+          />
           <ViewToggle mode={viewMode} onChange={setViewMode} />
-          <label
-            className="flex items-center gap-2 cursor-pointer select-none"
-            title="Resume each track from where you left off, and show how far through each one you are"
-          >
-            <Switch checked={resumeEnabled} onCheckedChange={toggleResume} />
-            <span className="hidden sm:inline font-mono text-xs text-text-secondary">
-              Resume
-            </span>
-          </label>
         </div>
         <Button
           variant="ghost"

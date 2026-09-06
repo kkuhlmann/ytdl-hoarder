@@ -1,4 +1,4 @@
-"""Deployment-default hardening: the boot guard, the auth cookie, the CORS allowlist, API docs.
+"""Deployment-default hardening: the boot guard, the auth cookie, the CORS policy, API docs.
 
 Each of these is what a stranger inherits by copying `config.sample.yml` verbatim, so
 the defaults themselves are asserted rather than only the injected values.
@@ -78,15 +78,10 @@ class TestAuthCookieSecureFlag:
         assert {'httponly', 'samesite=lax', 'path=/'} <= cookie_attributes(response)
 
 
-def cors_client(allow_origins: list[str]) -> TestClient:
+def cors_client(origins: list[str]) -> TestClient:
+    """A throwaway app wired exactly as `main` wires the real one, for the given origins."""
     app = FastAPI()
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allow_origins,
-        allow_credentials=True,
-        allow_methods=['*'],
-        allow_headers=['*'],
-    )
+    app.add_middleware(CORSMiddleware, **main.cors_kwargs(origins))
 
     @app.get('/probe')
     def probe():
@@ -95,17 +90,55 @@ def cors_client(allow_origins: list[str]) -> TestClient:
     return TestClient(app)
 
 
-class TestCorsAllowlist:
-    def test_default_allows_only_the_dev_frontend(self, monkeypatch):
-        monkeypatch.delenv('AUTH__ALLOWED_ORIGINS', raising=False)
-        assert AuthSettings().allowed_origins == ['http://localhost:3000']
+class TestCorsKwargs:
+    def test_no_origins_falls_through_to_the_any_origin_regex(self):
+        kwargs = main.cors_kwargs([])
 
-    def test_wildcard_with_credentials_echoes_any_origin(self):
-        """Characterizes the pre-hardening config, so the allowlist's job stays visible."""
-        resp = cors_client(['*']).get('/probe', headers={'Origin': 'https://evil.example'})
+        assert kwargs['allow_origin_regex'] == '.*'
+        assert kwargs['allow_origins'] == []
+
+    def test_listed_origins_drop_the_regex(self):
+        kwargs = main.cors_kwargs(['http://localhost:3000'])
+
+        assert kwargs['allow_origins'] == ['http://localhost:3000']
+        assert kwargs['allow_origin_regex'] is None
+
+    def test_credentials_are_allowed_either_way(self):
+        assert main.cors_kwargs([])['allow_credentials'] is True
+        assert main.cors_kwargs(['http://localhost:3000'])['allow_credentials'] is True
+
+
+class TestCorsDefaultAllowsAnyOrigin:
+    """Empty is the shipped default: dev cannot know the address the browser will use."""
+
+    def test_the_default_is_empty(self, monkeypatch):
+        monkeypatch.delenv('AUTH__ALLOWED_ORIGINS', raising=False)
+        assert AuthSettings().allowed_origins == []
+
+    def test_any_origin_is_echoed_with_credentials(self):
+        resp = cors_client([]).get('/probe', headers={'Origin': 'https://evil.example'})
 
         assert resp.headers['access-control-allow-origin'] == 'https://evil.example'
         assert resp.headers['access-control-allow-credentials'] == 'true'
+
+    def test_the_echo_varies_on_origin(self):
+        """Without this a shared cache could serve one origin's response to another."""
+        resp = cors_client([]).get('/probe', headers={'Origin': 'https://evil.example'})
+
+        assert 'origin' in resp.headers['vary'].lower()
+
+    def test_a_preflight_from_any_origin_is_answered(self):
+        resp = cors_client([]).options(
+            '/probe',
+            headers={'Origin': 'https://evil.example', 'Access-Control-Request-Method': 'GET'},
+        )
+
+        assert resp.headers['access-control-allow-origin'] == 'https://evil.example'
+
+
+class TestCorsAllowlistIsOptIn:
+    """Listing origins restores the strict allowlist, which is the whole point of keeping
+    the setting rather than hardcoding the open default."""
 
     def test_allowlist_denies_a_foreign_origin(self):
         resp = cors_client(['http://localhost:3000']).get(
@@ -172,13 +205,12 @@ class TestApiDocsAreWiredIntoTheApp:
 
 @pytest.mark.skipif(main.SERVE_FRONTEND, reason='CORS is only mounted in API-only dev mode')
 class TestCorsIsWiredIntoTheApp:
-    def test_foreign_origin_denied(self):
-        resp = TestClient(main.app).get('/health', headers={'Origin': 'https://evil.example'})
+    def test_the_loaded_settings_reach_the_middleware(self):
+        """Passes under either policy, so a config.yml that opts into an allowlist
+        doesn't turn this into a failure on the developer's own machine."""
+        configured = settings.auth.allowed_origins
+        origin = configured[0] if configured else 'https://any.example'
 
-        assert 'access-control-allow-origin' not in resp.headers
-
-    def test_configured_origin_allowed(self):
-        origin = settings.auth.allowed_origins[0]
         resp = TestClient(main.app).get('/health', headers={'Origin': origin})
 
         assert resp.headers['access-control-allow-origin'] == origin

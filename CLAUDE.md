@@ -2,9 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-All shared project guidance — architecture, development commands, configuration, code style — lives
-in `AGENTS.md`, so every agent reads the same source of truth. **Put new project guidance there, not
-here.** This file is only for behavior specific to Claude Code.
+Shared project guidance lives in `AGENTS.md` and `.claude/rules/`, so every agent reads the same
+source of truth. `AGENTS.md` carries what applies everywhere — architecture map, access control, the
+task orchestrator, code style — and `.claude/rules/*.md` carry the area-specific deep dives, each
+scoped by `paths:` frontmatter so Claude Code loads it only when you open a matching file.
+**Put new project guidance in whichever of those matches its scope, not here** (`AGENTS.md` has a
+table saying which is which). This file is only for behavior specific to Claude Code.
 
 @AGENTS.md
 
