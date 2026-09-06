@@ -51,16 +51,16 @@ class TestNormalizeVideoUrl:
         url = 'https://m.youtube.com/watch?v=dQw4w9WgXcQ'
         assert normalize_video_url(url) == 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 
-    def test_rumble_passthrough(self):
-        url = 'https://rumble.com/v1abc23-some-video.html'
+    def test_html_suffix_passthrough(self):
+        url = 'https://example.com/v1abc23-some-video.html'
         assert normalize_video_url(url) == url
 
     def test_twitter_passthrough(self):
         url = 'https://x.com/user/status/1234567890'
         assert normalize_video_url(url) == url
 
-    def test_odysee_passthrough(self):
-        url = 'https://odysee.com/@channel:1/video-title:2'
+    def test_at_and_colon_path_passthrough(self):
+        url = 'https://example.com/@channel:1/video-title:2'
         assert normalize_video_url(url) == url
 
     def test_generic_url_passthrough(self):
@@ -94,11 +94,11 @@ class TestNormalizePlaylistUrl:
         )
 
     def test_non_youtube_returns_none(self):
-        url = 'https://rumble.com/c/SomeChannel'
+        url = 'https://example.com/c/SomeChannel'
         assert normalize_playlist_url(url) is None
 
     def test_non_youtube_with_list_param_returns_none(self):
-        url = 'https://rumble.com/c/SomeChannel?list=some-other-sites-list-id'
+        url = 'https://example.com/c/SomeChannel?list=some-other-sites-list-id'
         assert normalize_playlist_url(url) is None
 
     def test_youtube_channel_returns_none(self):
@@ -114,7 +114,7 @@ class TestNormalizePlaylistUrl:
 
 
 class TestIsChannelOrFeedUrl:
-    """Tests for is_channel_or_feed_url: multi-platform channel detection."""
+    """Tests for is_channel_or_feed_url: YouTube channel detection."""
 
     # YouTube
     def test_youtube_at_channel(self):
@@ -132,27 +132,17 @@ class TestIsChannelOrFeedUrl:
     def test_youtube_user(self):
         assert is_channel_or_feed_url('https://www.youtube.com/user/RickAstley') is True
 
-    # Rumble
-    def test_rumble_c_channel(self):
-        assert is_channel_or_feed_url('https://rumble.com/c/SomeChannel') is True
+    # Channel detection is YouTube-only by design. Non-YouTube channel URLs are caught
+    # later by the site-agnostic playlist guard in tasks/media.py, so these False results
+    # are the intended scope rather than a gap.
+    def test_rumble_channel_not_recognized(self):
+        assert is_channel_or_feed_url('https://rumble.com/c/SomeChannel') is False
 
-    def test_rumble_user(self):
-        assert is_channel_or_feed_url('https://rumble.com/user/SomeUser') is True
+    def test_odysee_channel_not_recognized(self):
+        assert is_channel_or_feed_url('https://odysee.com/@RickAstleyYT') is False
 
-    def test_rumble_video_not_channel(self):
-        assert is_channel_or_feed_url('https://rumble.com/v1abc23-some-video.html') is False
-
-    # Odysee
-    def test_odysee_channel(self):
-        assert is_channel_or_feed_url('https://odysee.com/@RickAstleyYT') is True
-
-    def test_odysee_video_not_channel(self):
-        """Video URLs have @channel/video format but still contain @, so they match."""
-        assert is_channel_or_feed_url('https://odysee.com/@channel:1/video:2') is True
-
-    # Bitchute
-    def test_bitchute_channel(self):
-        assert is_channel_or_feed_url('https://www.bitchute.com/channel/abc123') is True
+    def test_bitchute_channel_not_recognized(self):
+        assert is_channel_or_feed_url('https://www.bitchute.com/channel/abc123') is False
 
     # Negative cases
     def test_youtube_video_not_channel(self):
@@ -194,11 +184,11 @@ class TestIsYoutubeUrl:
     def test_mobile_youtube(self):
         assert is_youtube_url('https://m.youtube.com/watch?v=dQw4w9WgXcQ') is True
 
-    def test_rumble_not_youtube(self):
-        assert is_youtube_url('https://rumble.com/v123-video.html') is False
+    def test_other_host_not_youtube(self):
+        assert is_youtube_url('https://example.com/v123-video.html') is False
 
-    def test_odysee_not_youtube(self):
-        assert is_youtube_url('https://odysee.com/@channel/video') is False
+    def test_at_path_not_youtube(self):
+        assert is_youtube_url('https://example.com/@channel/video') is False
 
     def test_generic_not_youtube(self):
         assert is_youtube_url('https://example.com') is False
@@ -271,9 +261,9 @@ class TestExtractEntriesNormalizeUrls:
         )
 
     def test_non_youtube_entry_passes_through(self):
-        info = {'entries': [{'url': 'https://rumble.com/v123-some-video.html', 'title': 'R'}]}
+        info = {'entries': [{'url': 'https://example.com/v123-some-video.html', 'title': 'R'}]}
         assert (
-            extract_entries_from_info(info)[0]['url'] == 'https://rumble.com/v123-some-video.html'
+            extract_entries_from_info(info)[0]['url'] == 'https://example.com/v123-some-video.html'
         )
 
     def test_nested_tab_entries_normalized(self):

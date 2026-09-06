@@ -36,7 +36,7 @@ from ytdlp.options import (
     download_quality_to_ytdlp,
 )
 from ytdlp.playlists import is_repeat_download
-from ytdlp.urls import get_url_hash, is_channel_or_feed_url
+from ytdlp.urls import get_url_hash
 
 SUBTITLE_EXTENSIONS = (
     '.vtt',
@@ -685,10 +685,6 @@ def run_download_job(ctx: JobContext, dl_job: dict) -> dict:  # noqa: C901 — t
         ctx.skip_downstream = True
 
     logger.debug(f'Starting download for {dto}')
-
-    if is_channel_or_feed_url(dto.url):
-        msg = 'Channel URLs are not supported for direct download'
-        raise ValueError(msg)
 
     try:
         # Re-resolve MediaDetails by url+media_type — the payload id may be stale

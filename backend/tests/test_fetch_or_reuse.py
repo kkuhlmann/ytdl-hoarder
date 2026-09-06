@@ -399,6 +399,42 @@ class TestUsePendingOrFetchFresh:
 
         assert mock_defer.call_args.args[3] == EXTRACTION_TRANSIENT
 
+    @patch('tasks.media.tr_repo')
+    @patch('tasks.media._defer_media')
+    @patch(
+        'tasks.media.get_url_info_with_failure',
+        return_value=({'_type': 'playlist', 'title': 'Some Channel'}, None),
+    )
+    def test_playlist_info_is_rejected_not_deferred(self, mock_info, mock_defer, mock_tr):
+        """A channel URL never becomes a video, so a deferral would re-fetch it every tick.
+
+        Nothing downstream catches this: is_video_ready_for_download inspects only live
+        status, and create_ydl_options sets no noplaylist.
+        """
+        dto = _make_dto(placeholder_task_id='resolving-1')
+        result = _use_pending_or_fetch_fresh(dto)
+
+        assert result is None
+        mock_defer.assert_not_called()
+        assert mock_tr.sync_retire_placeholder.call_args.args[:2] == (
+            'resolving-1',
+            TaskStatus.FAILED,
+        )
+
+    @patch('tasks.media.md_repo')
+    @patch('tasks.media.tr_repo')
+    @patch(
+        'tasks.media.get_url_info_with_failure',
+        return_value=({'_type': 'video', 'title': 'T', 'duration': 10}, None),
+    )
+    def test_video_type_is_not_rejected(self, mock_info, mock_tr, mock_md):
+        """Only 'playlist' means channel/feed — a single video carries 'video' or nothing."""
+        dto = _make_dto()
+        result = _use_pending_or_fetch_fresh(dto)
+
+        assert result is not None
+        mock_tr.sync_retire_placeholder.assert_not_called()
+
     @patch('tasks.media.md_repo')
     @patch('tasks.media.get_release_timestamp')
     @patch('tasks.media.get_channel_from_info')

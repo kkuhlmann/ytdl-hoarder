@@ -1071,6 +1071,20 @@ def _use_pending_or_fetch_fresh(dto: DownloadJobDTO) -> DownloadJobDTO | None:
         _defer_media(dto, {}, 'Video metadata is unavailable', failure_kind)
         return None
 
+    # A channel/playlist URL reached the single-video path, and nothing downstream catches it:
+    # is_video_ready_for_download inspects only live status, and create_ydl_options sets no
+    # noplaylist, so the download would enumerate the whole channel into a single job. Deferring
+    # instead would be wrong — a channel never becomes a video, so the NOT_READY row would make
+    # every subscription tick re-fetch it forever.
+    if info.get('_type') == 'playlist':
+        logger.warning(f'Rejecting channel/playlist URL in the direct download path: {dto.url}')
+        tr_repo.sync_retire_placeholder(
+            dto.placeholder_task_id,
+            TaskStatus.FAILED,
+            'Channel and playlist URLs cannot be downloaded directly. Add as a subscription.',
+        )
+        return None
+
     # Defer unreleased videos (live / upcoming premiere / post-live) — don't
     # persist as downloadable until aired so metadata (duration, etc.) is captured
     # correctly. The deferred row records when it airs and when to look again.
