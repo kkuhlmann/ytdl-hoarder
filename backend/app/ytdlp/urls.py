@@ -3,9 +3,6 @@ from urllib.parse import parse_qs, urlparse
 
 CHANNEL_URL_PATTERNS = {
     'youtube.com': ['/@', '/channel/', '/c/', '/user/'],
-    'rumble.com': ['/c/', '/user/'],
-    'odysee.com': ['/@'],
-    'bitchute.com': ['/channel/'],
 }
 
 
@@ -17,7 +14,7 @@ def is_youtube_url(url: str) -> bool:
 
 
 def is_channel_or_feed_url(url: str) -> bool:
-    """Check if a URL points to a channel or feed across supported platforms."""
+    """Check if a URL points to a YouTube channel or feed."""
     lower_url = url.lower()
     for domain, patterns in CHANNEL_URL_PATTERNS.items():
         if domain not in lower_url:

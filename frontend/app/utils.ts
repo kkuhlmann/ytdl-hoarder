@@ -131,25 +131,8 @@ export function formatDurationCompact(seconds: number | undefined | null): strin
   return `${Math.floor(seconds)}s`
 }
 
+// Subscription URLs are validated server-side by yt-dlp; this is only a well-formedness check.
 export function isValidSubscriptionUrl(url: string) {
-  // Known platform channel/playlist patterns for instant client-side feedback
-  const knownPatterns = [
-    // YouTube channels and playlists
-    /^https?:\/\/(www\.)?youtube\.com\/(channel\/|c\/|user\/|@)[\w@.-]+/,
-    /^https?:\/\/(www\.)?youtube\.com\/playlist\?list=[a-zA-Z0-9_-]+/,
-    // Rumble channels
-    /^https?:\/\/(www\.)?rumble\.com\/(c|user)\/[\w.-]+/,
-    // Odysee channels
-    /^https?:\/\/(www\.)?odysee\.com\/@[\w:.-]+/,
-    // Bitchute channels
-    /^https?:\/\/(www\.)?bitchute\.com\/channel\/[\w-]+/,
-  ]
-
-  for (const pattern of knownPatterns) {
-    if (pattern.test(url)) return true
-  }
-
-  // Fall back to generic URL validation - let the backend validate via yt-dlp
   return isValidURL(url)
 }
 

@@ -108,7 +108,7 @@ def add_subscription_details_impl(subscription: dict) -> None:
         info = get_url_info(url, max_entries=1)
         channel = info.get('title', 'Unknown') if info else 'Unknown'
     elif is_channel_or_feed_url(sub_dto.url):
-        # Known channel pattern (YouTube, Rumble, Odysee, etc.)
+        # Known YouTube channel pattern
         logger.info(f'Channel url: {sub_dto.url}')
         url = sub_dto.url
         job_type = JobType.CHANNEL_SUBSCRIPTION

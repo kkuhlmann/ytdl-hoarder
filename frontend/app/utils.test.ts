@@ -206,15 +206,12 @@ describe("isValidSubscriptionUrl", () => {
     "https://www.youtube.com/channel/UCabc123",
     "https://youtube.com/@somechannel",
     "https://www.youtube.com/playlist?list=PLabc123",
-    "https://rumble.com/c/SomeChannel",
-    "https://odysee.com/@SomeChannel:1",
-    "https://www.bitchute.com/channel/somechannel",
     "https://example.com/some-generic-page",
   ])("%s is a valid subscription URL", (url) => {
     expect(isValidSubscriptionUrl(url)).toBe(true)
   })
 
-  it("falls back to isValidURL and rejects a non-URL", () => {
+  it("delegates to isValidURL and rejects a non-URL", () => {
     expect(isValidSubscriptionUrl("not a url")).toBe(false)
   })
 })
