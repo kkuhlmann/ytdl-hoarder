@@ -20,8 +20,11 @@ interface UsePeaksResult {
 // Slightly above the backend's ffmpeg ceiling so the backend's clean error wins.
 const PEAKS_REQUEST_TIMEOUT_MS = 330_000
 
-// Enough resolution for ~12x zoom without blocky bars.
-const NUM_PEAKS = 8000
+// Enough resolution for ~12x zoom without blocky bars. Exported because the
+// offline downloader caches exactly this response: the service worker matches
+// peaks on pathname alone, so the cached copy is only correct while this is the
+// single resolution the app ever requests.
+export const NUM_PEAKS = 8000
 
 export function usePeaks({
   mediaDetailsId,

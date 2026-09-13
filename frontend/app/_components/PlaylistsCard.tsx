@@ -13,6 +13,8 @@ import { buildPlaylistColumns } from "@/app/_components/playlists/columns"
 import { DataTable } from "@/app/_components/data/DataTable"
 import { CardGrid } from "@/app/_components/data/CardGrid"
 import { ActionList, actionsHeaderStrip } from "@/app/_components/data/ActionList"
+import { CollectionOfflineButton } from "@/app/_components/CollectionOfflineButton"
+import { playlistSource } from "@/app/lib/offlineSync"
 import type { ActionDescriptor } from "@/app/_components/data/ActionList"
 import { ShareDialog } from "@/app/_components/ShareDialog"
 import { ViewToggle } from "@/app/_components/ViewToggle"
@@ -29,6 +31,7 @@ import { useMediaPlayer } from "@/app/context/MediaPlayerContext"
 import {
   MagnifyingGlassIcon,
   ArrowLeftIcon,
+  ArrowPathIcon,
   PlusIcon,
   UserPlusIcon,
 } from "@heroicons/react/20/solid"
@@ -312,6 +315,12 @@ export function PlaylistsCard() {
   }, [reloadPlaylists])
 
   const playlistActions: ActionDescriptor<Playlist>[] = [
+    {
+      key: "offlineSync",
+      title: "Keep offline",
+      icon: ArrowPathIcon,
+      render: (playlist) => <CollectionOfflineButton source={playlistSource(playlist.id)} />,
+    },
     {
       key: "share",
       title: "Share",

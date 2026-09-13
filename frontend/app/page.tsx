@@ -14,6 +14,9 @@ import axios from "axios"
 import { apiUrl, fetchPage, searchParam } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
 import { groupFilterParams } from "@/app/lib/groupFilter"
+import { fetchOfflineLibrary } from "@/app/lib/offlineLibrary"
+import { useOffline } from "@/app/context/OfflineContext"
+import { OfflineUnavailable } from "@/app/_components/OfflineUnavailable"
 import { SubscriptionsCard } from "@/app/_components/SubscriptionsCard"
 import { ClipsCard } from "@/app/_components/ClipsCard"
 import { PlaylistsCard } from "@/app/_components/PlaylistsCard"
@@ -85,6 +88,7 @@ export default function HomePage() {
   const [mediaStatus, setMediaStatus] = useState("COMPLETE")
   const { view, setView } = useView()
   const { adminMode, adminParam } = useAdmin()
+  const { offlineMode } = useOffline()
 
   // Each add-form belongs to one view and reads as empty from anywhere else, so
   // no effect is needed to clear it on navigation.
@@ -226,6 +230,21 @@ export default function HomePage() {
       groupFilter?: GroupLeafFilter | null,
       pageSize?: number,
     ) => {
+      // Offline mode reads the downloaded records instead. Swapping the fetcher
+      // here rather than inside DownloadsCard keeps the swap to one place: this is
+      // the only path by which the library list is loaded.
+      if (offlineMode) {
+        return fetchOfflineLibrary({
+          search,
+          pageNumber,
+          sortBy,
+          sortDirection,
+          tagIds,
+          minRating,
+          pageSize,
+        })
+      }
+
       const params: Record<string, any> = {
         search: searchParam(search),
         status: status,
@@ -249,7 +268,7 @@ export default function HomePage() {
         return { pageCount: 0, tableRows: [] }
       })
     },
-    [adminParam],
+    [adminParam, offlineMode],
   )
 
   // useCallback like its siblings above/below: SubscriptionsCard now lists this
@@ -359,6 +378,8 @@ export default function HomePage() {
                     setSemanticWeight={setSemanticWeight}
                   />
                 </motion.div>
+              ) : view === "subscriptions" && offlineMode ? (
+                <OfflineUnavailable key="subscriptions-offline" label="Subscriptions" />
               ) : view === "subscriptions" ? (
                 <motion.div
                   key="subscriptions"
@@ -397,6 +418,8 @@ export default function HomePage() {
                 >
                   <PlaylistsCard />
                 </motion.div>
+              ) : view === "tasks" && offlineMode ? (
+                <OfflineUnavailable key="tasks-offline" label="Tasks" />
               ) : view === "tasks" ? (
                 <motion.div
                   key="tasks"
@@ -410,6 +433,8 @@ export default function HomePage() {
                     fetchStats={fetchTaskStats}
                   />
                 </motion.div>
+              ) : view === "stats" && offlineMode ? (
+                <OfflineUnavailable key="stats-offline" label="Stats" />
               ) : view === "stats" ? (
                 <motion.div
                   key="stats"
@@ -420,6 +445,8 @@ export default function HomePage() {
                 >
                   <StatsCard />
                 </motion.div>
+              ) : view === "settings" && offlineMode ? (
+                <OfflineUnavailable key="settings-offline" label="Settings" />
               ) : view === "settings" && adminMode ? (
                 <motion.div
                   key="settings"

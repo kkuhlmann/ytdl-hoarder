@@ -15,6 +15,7 @@ import {
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline"
 import toast from "react-hot-toast"
 
+import { OfflineDownloadButton } from "./OfflineDownloadButton"
 import type { ActionDescriptor } from "@/app/_components/data/ActionList"
 import type { MediaActions } from "@/app/_hooks/useMediaActions"
 import type { MediaDialogs } from "./MediaActionDialogs"
@@ -316,6 +317,12 @@ export function buildMediaActions({
       },
       buttonClassName: "hover:bg-matrix/20",
       iconClassName: "text-text-muted hover:text-matrix",
+    },
+    {
+      key: "offline",
+      title: "Save for offline",
+      headerIcon: ArrowDownTrayIcon,
+      render: (row) => <OfflineDownloadButton row={row} />,
     },
     {
       key: "clip",

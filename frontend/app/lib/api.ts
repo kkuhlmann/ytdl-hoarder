@@ -10,6 +10,8 @@
 
 import axios from "axios"
 
+import { readOfflineMode } from "./offlineMode"
+
 const DEV_API_PORT = "8000"
 
 function apiBase(): string {
@@ -31,7 +33,10 @@ axios.interceptors.response.use(
     if (error.response?.status === 401) {
       // Don't redirect for auth endpoints themselves
       const url = error.config?.url || ''
-      if (!url.includes('/auth/')) {
+      // In offline mode the cookie may well have expired while the device was away
+      // from the server. Signing the user out over that would take away the
+      // downloaded library too, which is the one thing still usable.
+      if (!url.includes('/auth/') && !readOfflineMode()) {
         window.dispatchEvent(new Event('auth:unauthorized'))
       }
     }

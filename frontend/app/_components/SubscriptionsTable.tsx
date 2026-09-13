@@ -3,7 +3,7 @@
 import { Dispatch, SetStateAction, useState } from "react"
 import axios from "axios"
 import toast from "react-hot-toast"
-import { CheckIcon, XMarkIcon, UserPlusIcon } from "@heroicons/react/20/solid"
+import { ArrowPathIcon, CheckIcon, XMarkIcon, UserPlusIcon } from "@heroicons/react/20/solid"
 
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
@@ -11,6 +11,8 @@ import { apiUrl, errorMessage } from "@/app/lib/api"
 import { DataTable } from "./data/DataTable"
 import type { Column } from "./data/DataTable"
 import { ActionList } from "./data/ActionList"
+import { CollectionOfflineButton } from "@/app/_components/CollectionOfflineButton"
+import { subscriptionSource } from "@/app/lib/offlineSync"
 import type { ActionDescriptor } from "./data/ActionList"
 import { EditSubscriptionDialog } from "@/app/_components/EditSubscriptionDialog"
 import { ShareDialog } from "./ShareDialog"
@@ -65,6 +67,12 @@ export function SubscriptionsTable({
   }
 
   const actions: ActionDescriptor<SubscriptionType>[] = [
+    {
+      key: "offlineSync",
+      title: "Keep offline",
+      icon: ArrowPathIcon,
+      render: (sub) => <CollectionOfflineButton source={subscriptionSource(sub.id)} />,
+    },
     {
       key: "share",
       title: "Share",

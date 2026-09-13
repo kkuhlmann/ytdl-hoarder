@@ -20,6 +20,11 @@ import { apiUrl } from "@/app/lib/api"
 import { useAuth } from "@/app/context/AuthContext"
 import { useAdmin } from "@/app/context/AdminContext"
 import { ThemeSwitcher } from "@/app/_components/ThemeSwitcher"
+import { OfflineToggle } from "@/app/_components/OfflineToggle"
+import {
+  OfflineStorageButton,
+  OfflineStorageDialog,
+} from "@/app/_components/OfflineStorageDialog"
 import { ThemePicker } from "@/app/_components/ThemePicker"
 import { ChangePasswordDialog } from "@/app/_components/auth/ChangePasswordDialog"
 import {
@@ -76,6 +81,7 @@ export function NavigationBar() {
   const [storageUsed, setStorageUsed] = useState<number | null>(null)
   const [storageLimit, setStorageLimit] = useState<number | null>(null)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [storageOpen, setStorageOpen] = useState(false)
 
   // Track theme changes for conditional rendering (e.g. GeoCities color picker)
   const currentTheme = useDocumentTheme()
@@ -208,6 +214,8 @@ export function NavigationBar() {
 
           {/* Right side - User info + Theme */}
           <div className="hidden sm:flex items-center gap-3 justify-end min-w-0">
+            <OfflineToggle />
+            <OfflineStorageButton onClick={() => setStorageOpen(true)} />
             <ThemeSwitcher />
             {currentTheme === "geocities" && <ThemePicker />}
             {user && (
@@ -268,6 +276,7 @@ export function NavigationBar() {
       </div>
 
       <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
+      <OfflineStorageDialog open={storageOpen} onOpenChange={setStorageOpen} />
     </nav>
   )
 }

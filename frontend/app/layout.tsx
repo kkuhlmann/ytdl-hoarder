@@ -5,9 +5,11 @@ import { Toaster } from "react-hot-toast"
 import { ViewProvider } from "./context/ViewContext"
 import { MediaPlayerProvider } from "@/app/context/MediaPlayerContext"
 import { AuthProvider } from "@/app/context/AuthContext"
+import { OfflineProvider } from "@/app/context/OfflineContext"
 import { AdminProvider } from "@/app/context/AdminContext"
 import { AuthGuard } from "@/app/_components/AuthGuard"
 import { ThumbnailFilters } from "@/app/_components/ThumbnailFilters"
+import { ServiceWorkerRegistrar } from "@/app/_components/ServiceWorkerRegistrar"
 
 export const metadata: Metadata = {
   title: "Ytdl-Hoarder",
@@ -71,20 +73,25 @@ export default function RootLayout({
           }}
         />
         <ThumbnailFilters />
-        <AuthProvider>
-          <AuthGuard>
-            <AdminProvider>
-            <MediaPlayerProvider>
-              <ViewProvider>
-                <div className="min-h-screen bg-bg-void bg-grid">
-                  <NavigationBar />
-                  {children}
-                </div>
-              </ViewProvider>
-            </MediaPlayerProvider>
-            </AdminProvider>
-          </AuthGuard>
-        </AuthProvider>
+        <ServiceWorkerRegistrar />
+        {/* Outside AuthProvider: the auth bootstrap consults the mode to decide
+            whether to wait a minute for a server that isn't coming. */}
+        <OfflineProvider>
+          <AuthProvider>
+            <AuthGuard>
+              <AdminProvider>
+              <MediaPlayerProvider>
+                <ViewProvider>
+                  <div className="min-h-screen bg-bg-void bg-grid">
+                    <NavigationBar />
+                    {children}
+                  </div>
+                </ViewProvider>
+              </MediaPlayerProvider>
+              </AdminProvider>
+            </AuthGuard>
+          </AuthProvider>
+        </OfflineProvider>
       </body>
     </html>
   )
