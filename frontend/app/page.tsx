@@ -328,7 +328,7 @@ export default function HomePage() {
   }, [adminParam])
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen pb-[env(safe-area-inset-bottom)]">
       <main
         className={`w-full lg:container mx-auto px-2 pt-4 md:px-4 md:pt-6 ${audioPlayer.visible ? (infoExpanded ? "pb-32 sm:pb-36" : "pb-24 sm:pb-28") : "pb-4 md:pb-6"}`}
       >
@@ -448,7 +448,7 @@ export default function HomePage() {
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 100, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="pointer-events-auto bg-bg-terminal/95 backdrop-blur-sm border-t border-border overflow-hidden"
+              className="pointer-events-auto bg-bg-terminal/95 backdrop-blur-sm border-t border-border overflow-hidden pb-[env(safe-area-inset-bottom)]"
             >
             {visualizerStyle && (
               <AudioVisualizer

@@ -1,5 +1,5 @@
 import "./globals.css"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { NavigationBar } from "@/app/_components/NavigationBar"
 import { Toaster } from "react-hot-toast"
 import { ViewProvider } from "./context/ViewContext"
@@ -12,6 +12,21 @@ import { ThumbnailFilters } from "@/app/_components/ThumbnailFilters"
 export const metadata: Metadata = {
   title: "Ytdl-Hoarder",
   description: "Helper for managing YouTube downloads",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Hoarder", statusBarStyle: "black-translucent" },
+  icons: { apple: "/apple-touch-icon.png" },
+}
+
+// themeColor is a single value while the app ships 92 themes, so it names the
+// shared void background rather than any one theme's accent. viewportFit=cover is
+// what lets the standalone display mode reach under the iOS home indicator — and,
+// with statusBarStyle black-translucent, under the status bar. Nothing reserves
+// that space, so every viewport-pinned surface pads itself with
+// env(safe-area-inset-*): NavigationBar (top), the audio bar in page.tsx and the
+// Toaster below (bottom).
+export const viewport: Viewport = {
+  themeColor: "#0a0a0a",
+  viewportFit: "cover",
 }
 
 export default function RootLayout({
@@ -24,7 +39,8 @@ export default function RootLayout({
       <body className="font-sans">
         <Toaster
           position="bottom-left"
-          containerStyle={{ zIndex: 99999 }}
+          // 16px is react-hot-toast's default inset; containerStyle is spread over it.
+          containerStyle={{ zIndex: 99999, bottom: "calc(16px + env(safe-area-inset-bottom))" }}
           toastOptions={{
             style: {
               background: "var(--card-bg)",

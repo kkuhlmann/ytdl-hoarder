@@ -17,7 +17,7 @@ export function StatsPanel({ id, title, children }: StatsPanelProps) {
   return (
     <motion.section
       id={id}
-      className="scroll-mt-28 rounded-lg border border-border bg-bg-surface p-4 sm:p-5 transition-colors hover:border-matrix/40"
+      className="scroll-mt-[calc(7rem+env(safe-area-inset-top))] rounded-lg border border-border bg-bg-surface p-4 sm:p-5 transition-colors hover:border-matrix/40"
       initial={reduce ? false : { opacity: 0, y: 8 }}
       whileInView={reduce ? undefined : { opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-10%" }}

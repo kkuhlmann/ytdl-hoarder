@@ -169,6 +169,10 @@ export function NavigationBar() {
 
   return (
     <nav className="sticky top-0 z-40 w-full border-b border-border bg-bg-terminal/95 backdrop-blur-sm supports-backdrop-filter:bg-bg-terminal/60">
+      {/* Standalone iOS draws the page under the status bar (viewportFit cover +
+          black-translucent, layout.tsx); light themes paint this dark in globals.css
+          so the white clock stays legible. */}
+      <div className="status-bar-inset h-[env(safe-area-inset-top)]" />
       <div className="mx-auto px-4">
         <div className="grid grid-cols-[1fr_auto_1fr] h-14 items-center">
           {/* Logo/Brand */}
