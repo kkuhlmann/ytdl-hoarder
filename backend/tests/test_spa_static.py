@@ -77,3 +77,22 @@ def test_unknown_paths_fall_back_to_index(static_root, path):
 def test_null_byte_does_not_raise(static_root):
     """A NUL in the path makes stat() raise ValueError/OSError instead of returning."""
     assert main.resolve_spa_file('index.html\x00.png') == static_root / 'index.html'
+
+
+@pytest.mark.parametrize(
+    'path',
+    ['api', 'api/', 'api/media/1', 'api/does-not-exist', 'api/media-details?page=1'],
+)
+def test_api_paths_are_not_served_by_the_spa(static_root, path):
+    """An unmatched API path must 404 rather than answer 200 with the SPA shell.
+
+    A client — a service worker deciding whether a reply is cacheable most of all —
+    cannot distinguish a page of HTML returned under /api from a real response.
+    """
+    assert main.resolve_spa_file(path) is None
+
+
+@pytest.mark.parametrize('path', ['apidocs', 'api.txt', 'apis/media', 'my-api/thing'])
+def test_paths_merely_starting_with_api_still_reach_the_spa(static_root, path):
+    """The guard matches the /api segment, not the prefix of any longer word."""
+    assert main.resolve_spa_file(path) == static_root / 'index.html'
