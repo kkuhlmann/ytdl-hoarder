@@ -25,6 +25,7 @@ import {
   OfflineStorageButton,
   OfflineStorageDialog,
 } from "@/app/_components/OfflineStorageDialog"
+import { MobileNavMenu } from "@/app/_components/MobileNavMenu"
 import { ThemePicker } from "@/app/_components/ThemePicker"
 import { ChangePasswordDialog } from "@/app/_components/auth/ChangePasswordDialog"
 import {
@@ -81,6 +82,8 @@ export function NavigationBar() {
   const [storageUsed, setStorageUsed] = useState<number | null>(null)
   const [storageLimit, setStorageLimit] = useState<number | null>(null)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  // Held here, not inside the dialog: the mobile entry point is a menu item, and
+  // the menu unmounts its own children on select.
   const [storageOpen, setStorageOpen] = useState(false)
 
   // Track theme changes for conditional rendering (e.g. GeoCities color picker)
@@ -181,7 +184,9 @@ export function NavigationBar() {
       <div className="status-bar-inset h-[env(safe-area-inset-top)]" />
       <div className="mx-auto px-4">
         <div className="grid grid-cols-[1fr_auto_1fr] h-14 items-center">
-          {/* Logo/Brand */}
+          {/* Logo/Brand — everything here is hidden below sm. Keep it that way:
+              min-w-0 lets this grid track shrink below its content, and the wrapper
+              overflows visibly, so always-visible children spill over the nav. */}
           <div className="flex items-center gap-2 min-w-0">
             <span className="hidden sm:inline text-sm font-mono font-semibold text-matrix">
               ytdl-hoarder
@@ -212,19 +217,26 @@ export function NavigationBar() {
             ))}
           </ul>
 
-          {/* Right side - User info + Theme */}
-          <div className="hidden sm:flex items-center gap-3 justify-end min-w-0">
-            <OfflineToggle />
-            <OfflineStorageButton onClick={() => setStorageOpen(true)} />
-            <ThemeSwitcher />
-            {currentTheme === "geocities" && <ThemePicker />}
+          {/* Right side - User info + Theme. The cluster itself renders at every
+              width; each desktop-only child carries its own `hidden sm:*`, so a
+              phone gets exactly one item here — the overflow menu. */}
+          <div className="flex items-center gap-3 justify-end">
+            <OfflineToggle className="hidden sm:flex" />
+            <OfflineStorageButton
+              onClick={() => setStorageOpen(true)}
+              className="hidden sm:flex"
+            />
+            <span className="hidden sm:contents">
+              <ThemeSwitcher />
+              {currentTheme === "geocities" && <ThemePicker />}
+            </span>
             {user && (
               <>
                 {user.is_admin && (
                   <button
                     onClick={() => setAdminMode(!adminMode)}
                     className={cn(
-                      "flex items-center gap-1 px-2 py-1 text-xs font-mono rounded transition-colors",
+                      "hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono rounded transition-colors",
                       adminMode
                         ? "bg-status-warning/20 text-status-warning border border-status-warning/30"
                         : "text-text-muted hover:text-text-secondary"
@@ -253,7 +265,7 @@ export function NavigationBar() {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted hover:text-matrix transition-colors rounded shrink-0"
+                      className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted hover:text-matrix transition-colors rounded shrink-0"
                       title={user.username}
                     >
                       <UserCircleIcon className="w-4 h-4 lg:hidden" />
@@ -269,6 +281,17 @@ export function NavigationBar() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+
+                <span className="sm:hidden">
+                  <MobileNavMenu
+                    isAdmin={Boolean(user.is_admin)}
+                    adminMode={adminMode}
+                    setAdminMode={setAdminMode}
+                    onOpenStorage={() => setStorageOpen(true)}
+                    onOpenChangePassword={() => setChangePasswordOpen(true)}
+                    onSignOut={logout}
+                  />
+                </span>
               </>
             )}
           </div>
