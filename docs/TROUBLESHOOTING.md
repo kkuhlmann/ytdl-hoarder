@@ -80,6 +80,39 @@ below.
 since it ships with hardcoded credentials. Host tools on the Docker machine work normally; to reach
 it from elsewhere, tunnel over SSH rather than republishing the port.
 
+## Offline mode
+
+**I don't see the offline controls.** They hide themselves until offline support can actually work,
+so the download arrow, the signal icon and the database icon are all absent. Check, in this order:
+
+1. **Are you on an `https://` address?** A LAN IP or a bare Tailscale IP over plain `http://` is not
+   a secure context and cannot register a service worker. Put any trusted certificate in front of
+   port 8000 — Caddy, nginx, Traefik, Cloudflare Tunnel, or `tailscale serve --bg 8000`. A
+   self-signed certificate only counts if its CA is installed in the device's trust store; clicking
+   through the browser warning does not.
+2. **Are you running a production install?** `task dev` never shows offline controls — see
+   [CONFIGURATION.md](CONFIGURATION.md#what-offline-mode-requires). Use `task prod` or
+   `task published`.
+3. **Is your image new enough to include the feature?** An install pinned to an older
+   `YTDL_HOARDER_TAG` will not have it.
+
+**Offline mode is on but the library is empty.** The toggle filters the library to what is stored on
+this device; it does not fetch anything. Download items first — the arrow on a media row, or the
+refresh icon on a playlist or subscription — then switch the toggle on.
+
+**Downloads disappeared.** Two causes, and they look identical. On iOS, a plain Safari tab has its
+storage cleared after roughly a week of not being opened; an app added to the Home Screen keeps its
+storage and is allowed far more of it, so install it rather than browsing to it. Otherwise the
+storage budget reclaimed them: playlist and subscription downloads are removed
+least-recently-played-first once the budget is reached, while items downloaded by hand are pinned and
+are never removed automatically. Raise the budget from the storage dialog, or pin the item by
+downloading it by hand with the arrow on its media row — doing that to a synced item promotes it to
+pinned and takes it out of the eviction pool.
+
+**A download stops partway.** Downloads only progress while the app is in the foreground, so locking
+the phone interrupts them. Nothing is lost — progress is saved after each chunk, and *Resume
+interrupted* in the storage dialog picks up where it stopped.
+
 ## Dev mode networking
 
 These apply only to dev mode (`docker-compose.dev.yml`). The published and prod modes serve the UI

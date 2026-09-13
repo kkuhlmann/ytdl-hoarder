@@ -74,6 +74,9 @@ auth:
 
   # Send the auth cookie only over HTTPS. Defaults to false so plain-HTTP
   # self-hosts keep working; turn it on if you terminate TLS in front of the app.
+  # Note this stops sign-in from working over plain http:// entirely, LAN included.
+  # It governs the cookie only -- offline mode needs HTTPS and a production install,
+  # not this flag. See docs/CONFIGURATION.md.
   cookie_secure: false
 
   # Origins allowed to make credentialed cross-origin API calls.
