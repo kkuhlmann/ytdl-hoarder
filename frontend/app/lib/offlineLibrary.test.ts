@@ -1,5 +1,15 @@
-import { describe, it, expect } from "vitest"
-import { matchesSearch, sortRecords, type MediaRecord } from "./offlineLibrary"
+import "fake-indexeddb/auto"
+
+import { describe, it, expect, beforeEach } from "vitest"
+
+import { openOfflineDb, putItem, putMeta, type OfflineItem } from "./offlineDb"
+import {
+  fetchOfflineStats,
+  matchesSearch,
+  offlineTags,
+  sortRecords,
+  type MediaRecord,
+} from "./offlineLibrary"
 
 const record = (title: string, channel = ""): MediaRecord =>
   ({ id: 1, title, channel }) as MediaRecord
@@ -76,5 +86,60 @@ describe("sortRecords", () => {
     const original = [...rows]
     sortRecords(rows, "title", "asc")
     expect(rows).toEqual(original)
+  })
+})
+
+describe("stats and tags from the device", () => {
+  const item = (overrides: Partial<OfflineItem> & { id: number }): OfflineItem => ({
+    pinned: false,
+    source: "manual",
+    bytes: 100,
+    contentType: "video/mp4",
+    chunkCount: 1,
+    chunksStored: 1,
+    complete: true,
+    addedAt: 1,
+    lastPlayedAt: 0,
+    ...overrides,
+  })
+
+  async function wipe() {
+    const db = await openOfflineDb()
+    const stores = Array.from(db.objectStoreNames)
+    const tx = db.transaction(stores, "readwrite")
+    for (const name of stores) tx.objectStore(name).clear()
+    await new Promise((resolve) => (tx.oncomplete = resolve))
+  }
+
+  beforeEach(async () => {
+    await wipe()
+    await putItem(item({ id: 1 }))
+    await putMeta(1, {
+      id: 1,
+      title: "Rust talk",
+      transcript_block_count: 12,
+      tags: [{ id: 3, name: "tech" }, { id: 1, name: "talks" }],
+    })
+    await putItem(item({ id: 2 }))
+    await putMeta(2, { id: 2, title: "Go talk", transcript_block_count: 0, tags: [{ id: 3, name: "tech" }] })
+    // Not finished, so never part of the library.
+    await putItem(item({ id: 3, complete: false, chunksStored: 0 }))
+    await putMeta(3, { id: 3, title: "Rust half", transcript_block_count: 4, tags: [{ id: 9, name: "half" }] })
+  })
+
+  it("counts downloads and transcript blocks, honouring the search", async () => {
+    expect(await fetchOfflineStats()).toEqual({
+      total_downloads: 2,
+      total_transcript_blocks: 12,
+      downloads_with_transcripts: 1,
+    })
+    expect((await fetchOfflineStats("rust")).total_downloads).toBe(1)
+  })
+
+  it("lists each tag once, by name, from finished downloads only", async () => {
+    expect(await offlineTags()).toEqual([
+      { id: 1, name: "talks" },
+      { id: 3, name: "tech" },
+    ])
   })
 })

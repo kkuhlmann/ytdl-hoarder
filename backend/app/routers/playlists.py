@@ -67,9 +67,15 @@ async def get_all_playlists(
     page_size: int | None = None,
     sort_by: str | None = None,
     sort_direction: str = 'desc',
+    include_media_ids: bool = False,
     effective_user_id: int | None = Depends(get_effective_user_id),
 ) -> dict[str, Any]:
-    """Get all playlists with optional filtering and pagination."""
+    """Get all playlists with optional filtering and pagination.
+
+    `include_media_ids=true` adds each playlist's complete member id list, in playlist
+    order, as `media_ids` — one call for a client that needs to know membership without
+    fetching every playlist's media (the offline snapshot). Off by default.
+    """
     if page_size is None:
         settings = await settings_repo.get_settings()
         page_size = settings.download_table_page_size
@@ -81,6 +87,7 @@ async def get_all_playlists(
         sort_by=sort_by,
         sort_direction=sort_direction,
         user_id=effective_user_id,
+        include_media_ids=include_media_ids,
     )
 
 

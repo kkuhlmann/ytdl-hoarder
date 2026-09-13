@@ -12,6 +12,8 @@
  * return nothing here.
  */
 
+import type { MediaStats, TagInfo } from "@/app/types/DownloadsOptions"
+
 import { allItems, allMeta } from "./offlineDb"
 
 /**
@@ -35,6 +37,17 @@ export type OfflineLibraryQuery = {
 export type MediaRecord = Record<string, unknown> & { id: number }
 
 /**
+ * The records the offline library is made of: every stored media record whose
+ * download finished. A half-downloaded item has a record but nothing the worker
+ * could play, so it is left out here rather than in each caller.
+ */
+export async function playableRecords(): Promise<MediaRecord[]> {
+  const [items, metas] = await Promise.all([allItems(), allMeta()])
+  const playable = new Set(items.filter((item) => item.complete).map((item) => item.id))
+  return metas.filter((meta) => playable.has(meta.id)).map((meta) => meta.record as MediaRecord)
+}
+
+/**
  * Mirrors _build_search_condition: '||' splits first, then '&&', so '&&' binds
  * tighter. Single '&' / '|' stay literal, which is what keeps 'Law & Order'
  * matching. Returns true when the search parses to no usable terms.
@@ -56,6 +69,36 @@ export function matchesSearch(record: MediaRecord, search: string): boolean {
   return groups.some((terms) => terms.every((term) => haystack.includes(term)))
 }
 
+/** Below three characters the online search sends nothing, so neither does this. */
+function searchRecords(rows: MediaRecord[], search: string | null | undefined): MediaRecord[] {
+  if (!search || search.length <= 2) return rows
+  return rows.filter((row) => matchesSearch(row, search))
+}
+
+/** The library's stats chip, counted from what is on the device. */
+export async function fetchOfflineStats(search?: string | null): Promise<MediaStats> {
+  const rows = searchRecords(await playableRecords(), search)
+  const blockCounts = rows.map((row) =>
+    typeof row.transcript_block_count === "number" ? row.transcript_block_count : 0
+  )
+  return {
+    total_downloads: rows.length,
+    total_transcript_blocks: blockCounts.reduce((sum, count) => sum + count, 0),
+    downloads_with_transcripts: blockCounts.filter((count) => count > 0).length,
+  }
+}
+
+/** Every tag carried by a downloaded record, for the tag filter's picker. */
+export async function offlineTags(): Promise<TagInfo[]> {
+  const byId = new Map<number, TagInfo>()
+  for (const row of await playableRecords()) {
+    for (const tag of (row.tags as TagInfo[] | undefined) ?? []) byId.set(tag.id, tag)
+  }
+  return [...byId.values()]
+    .map(({ id, name }) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
 function compareValues(a: unknown, b: unknown): number {
   if (a == null && b == null) return 0
   // Nulls sort last ascending, matching Postgres's NULLS LAST default for ASC.
@@ -65,11 +108,11 @@ function compareValues(a: unknown, b: unknown): number {
   return String(a).localeCompare(String(b))
 }
 
-export function sortRecords(
-  records: MediaRecord[],
+export function sortRecords<T extends MediaRecord>(
+  records: T[],
   sortBy: string | null | undefined,
   sortDirection: string | null | undefined
-): MediaRecord[] {
+): T[] {
   const field = sortBy || "downloaded_at"
   const factor = sortDirection === "asc" ? 1 : -1
   // Sorted by field name against the flat serialized record, which already carries
@@ -86,17 +129,7 @@ export async function fetchOfflineLibrary({
   minRating,
   pageSize = OFFLINE_PAGE_SIZE,
 }: OfflineLibraryQuery): Promise<{ pageCount: number; tableRows: MediaRecord[] }> {
-  const [items, metas] = await Promise.all([allItems(), allMeta()])
-  const playable = new Set(items.filter((item) => item.complete).map((item) => item.id))
-
-  let rows = metas
-    .filter((meta) => playable.has(meta.id))
-    .map((meta) => meta.record as MediaRecord)
-
-  // Below three characters the online search sends nothing, so neither does this.
-  if (search && search.length > 2) {
-    rows = rows.filter((row) => matchesSearch(row, search))
-  }
+  let rows = searchRecords(await playableRecords(), search)
 
   if (tagIds && tagIds.length > 0) {
     const wanted = new Set(tagIds)

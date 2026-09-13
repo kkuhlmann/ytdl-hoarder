@@ -164,7 +164,8 @@ export function positionColumn<T extends { position: number }>(
 export type BuildDownloadColumnsArgs = {
   status: string
   actions: ActionDescriptor<Download>[]
-  onRate: (mediaId: number, rating: number | null) => void
+  /** Omit to show ratings read-only. */
+  onRate?: (mediaId: number, rating: number | null) => void
 }
 
 export function buildDownloadColumns({
@@ -239,7 +240,7 @@ export function buildDownloadColumns({
         status === "COMPLETE" ? (
           <StarRating
             rating={row.rating}
-            onRate={(r) => onRate(row.media_details_id, r)}
+            onRate={onRate && ((r) => onRate(row.media_details_id, r))}
             compact
           />
         ) : null,

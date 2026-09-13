@@ -88,6 +88,20 @@ describe("MobileNavMenu", () => {
     expect(screen.getByText("Sign out")).toBeDefined()
   })
 
+  it("keeps only the offline entries while offline mode is on", () => {
+    // Signing out offline would discard the cached identity that unlocks the
+    // downloaded library; the other two are server actions as well.
+    mockOffline.mockReturnValue({ offlineMode: true, setOfflineMode: vi.fn() })
+    renderMenu({ isAdmin: true })
+    openMenu()
+
+    expect(screen.getByText("Offline mode")).toBeDefined()
+    expect(screen.getByText("Offline storage…")).toBeDefined()
+    expect(screen.queryByText("Sign out")).toBeNull()
+    expect(screen.queryByText("Change password…")).toBeNull()
+    expect(screen.queryByText("Admin view")).toBeNull()
+  })
+
   it("shows the admin toggle only to an admin", () => {
     renderMenu({ isAdmin: false })
     openMenu()

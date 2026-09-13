@@ -6,6 +6,7 @@ import { useStoredValue, writeStored } from "@/app/_hooks/useStoredValue"
 import { useOfflineSupported } from "@/app/_hooks/useOfflineSupported"
 import { OFFLINE_MODE_STORAGE_KEY, readOfflineMode } from "@/app/lib/offlineMode"
 import { hydrateDownloads } from "@/app/lib/offlineDownloader"
+import { snapshotPlaylists } from "@/app/lib/offlinePlaylists"
 import { flushPlaybackOutbox } from "@/app/lib/playbackSync"
 import { syncMarkedCollections } from "@/app/lib/offlineSync"
 
@@ -42,6 +43,9 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   // finally be sent and marked collections can be brought up to date.
   useEffect(() => {
     void hydrateDownloads()
+    // On both edges: the switch is usually thrown while still connected, so
+    // entering offline mode is the last chance to capture playlist membership.
+    void snapshotPlaylists()
     if (offlineMode) return
     void flushPlaybackOutbox()
     void syncMarkedCollections()

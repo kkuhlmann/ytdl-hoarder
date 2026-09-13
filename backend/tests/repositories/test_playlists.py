@@ -338,6 +338,26 @@ async def test_get_all_playlists_returns_up_to_four_samples_in_position_order(te
     assert by_id[empty.id]['sample_media_ids'] == []
 
 
+async def test_get_all_playlists_include_media_ids_lists_every_member_in_order(test_database):
+    """media_ids is the full membership in playlist order, and only when asked for."""
+    async with db.get_async_session() as session:
+        await _seed_media(session, [f'member {i}' for i in range(6)], 'member-channel')
+    ids = await _media_ids('member-channel')
+
+    playlist = await playlists.create_playlist('Members')
+    # Reversed on insert so playlist order visibly differs from id order.
+    await playlists.add_media_bulk(playlist.id, list(reversed(ids)))
+    empty = await playlists.create_playlist('No Members')
+
+    result = await playlists.get_all_playlists(include_media_ids=True)
+    by_id = {r['id']: r for r in result['records']}
+    assert by_id[playlist.id]['media_ids'] == list(reversed(ids))
+    assert by_id[empty.id]['media_ids'] == []
+
+    default = await playlists.get_all_playlists()
+    assert all('media_ids' not in r for r in default['records'])
+
+
 async def test_remove_media_bulk_leaves_positions_contiguous(test_database):
     """Bulk removal renumbers to 1..N — the reorder arrows depend on contiguity."""
     async with db.get_async_session() as session:

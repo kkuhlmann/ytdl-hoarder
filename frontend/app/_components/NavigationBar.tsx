@@ -21,6 +21,7 @@ import { useAuth } from "@/app/context/AuthContext"
 import { useAdmin } from "@/app/context/AdminContext"
 import { ThemeSwitcher } from "@/app/_components/ThemeSwitcher"
 import { OfflineToggle } from "@/app/_components/OfflineToggle"
+import { useOffline } from "@/app/context/OfflineContext"
 import {
   OfflineStorageButton,
   OfflineStorageDialog,
@@ -77,6 +78,7 @@ export function NavigationBar() {
   const { view, setView } = useView()
   const { user, logout } = useAuth()
   const { adminMode, setAdminMode } = useAdmin()
+  const { offlineMode } = useOffline()
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [ytdlpVersion, setYtdlpVersion] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState<number | null>(null)
@@ -119,7 +121,8 @@ export function NavigationBar() {
   }, [user])
 
   const { refetch: refreshStorage } = useFetchEffect(fetchStorage, [fetchStorage], {
-    pollMs: 60_000,
+    enabled: !offlineMode,
+    pollMs: offlineMode ? null : 60_000,
   })
 
   useEffect(() => {
@@ -228,11 +231,11 @@ export function NavigationBar() {
             />
             <span className="hidden sm:contents">
               <ThemeSwitcher />
-              {currentTheme === "geocities" && <ThemePicker />}
+              {currentTheme === "geocities" && !offlineMode && <ThemePicker />}
             </span>
             {user && (
               <>
-                {user.is_admin && (
+                {user.is_admin && !offlineMode && (
                   <button
                     onClick={() => setAdminMode(!adminMode)}
                     className={cn(
@@ -262,25 +265,38 @@ export function NavigationBar() {
                     {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
                   </span>
                 )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted hover:text-matrix transition-colors rounded shrink-0"
-                      title={user.username}
-                    >
-                      <UserCircleIcon className="w-4 h-4 lg:hidden" />
-                      <span className="hidden lg:inline">{user.username}</span>
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
-                      Change Password
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={logout}>
-                      Sign out
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {/* Signing out offline would discard the cached identity that
+                    unlocks the downloaded library, with no server to sign back
+                    in against — so the account menu waits for the connection. */}
+                {offlineMode ? (
+                  <span
+                    className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted shrink-0"
+                    title={user.username}
+                  >
+                    <UserCircleIcon className="w-4 h-4 lg:hidden" />
+                    <span className="hidden lg:inline">{user.username}</span>
+                  </span>
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted hover:text-matrix transition-colors rounded shrink-0"
+                        title={user.username}
+                      >
+                        <UserCircleIcon className="w-4 h-4 lg:hidden" />
+                        <span className="hidden lg:inline">{user.username}</span>
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
+                        Change Password
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={logout}>
+                        Sign out
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
 
                 <span className="sm:hidden">
                   <MobileNavMenu

@@ -20,6 +20,8 @@ import { ShareDialog } from "@/app/_components/ShareDialog"
 import { ViewToggle } from "@/app/_components/ViewToggle"
 import { useViewMode } from "@/app/_hooks/useViewMode"
 import { useAuth } from "@/app/context/AuthContext"
+import { useOffline } from "@/app/context/OfflineContext"
+import { fetchOfflinePlaylistMedia, fetchOfflinePlaylists } from "@/app/lib/offlinePlaylists"
 import { TagMixView } from "@/app/_components/TagMixView"
 import { MediaClipEditor } from "@/app/_components/media/MediaClipEditor"
 import { InlinePlaylistVideoPlayer } from "@/app/_components/InlinePlaylistVideoPlayer"
@@ -74,9 +76,12 @@ const PLAYLIST_SORT_OPTIONS = [
 
 export function PlaylistsCard() {
   const { mediaPlayer } = useMediaPlayer()
+  const { offlineMode } = useOffline()
 
   // Top-level mode: normal playlist list vs. the on-the-fly tag-based "Tag Mix".
-  const [mode, setMode] = useState<'playlists' | 'tagmix'>('playlists')
+  // Tag Mix is built from server queries, so offline mode pins the list.
+  const [modeChoice, setMode] = useState<'playlists' | 'tagmix'>('playlists')
+  const mode = offlineMode ? 'playlists' : modeChoice
   // Lifted so tag selection survives the inline-video early return (unmount/remount).
   const [mixTagIds, setMixTagIds] = useState<number[]>([])
 
@@ -127,6 +132,17 @@ export function PlaylistsCard() {
       sortByParam: string | null,
       sortDirectionParam: SortDirection
     ) => {
+      // Offline, the list is the playlists with something downloaded — same
+      // envelope, read from the membership snapshot instead of the server.
+      if (offlineMode) {
+        return fetchOfflinePlaylists({
+          search: searchQuery,
+          pageNumber: page,
+          sortBy: sortByParam,
+          sortDirection: sortDirectionParam,
+        })
+      }
+
       const params: Record<string, string | number | null> = {
         page,
         sort_by: sortByParam,
@@ -143,7 +159,7 @@ export function PlaylistsCard() {
       )
       return response.data
     },
-    []
+    [offlineMode]
   )
 
   const fetchPlaylistMedia = useCallback(
@@ -153,6 +169,10 @@ export function PlaylistsCard() {
       sortByParam: string,
       sortDirectionParam: SortDirection
     ) => {
+      // Offline tracks come back in playlist order only; the detail view never
+      // sorts them any other way.
+      if (offlineMode) return fetchOfflinePlaylistMedia(playlistId, { pageNumber: page })
+
       const response = await axios.get(apiUrl(`/playlists/${playlistId}/media`), {
         params: {
           page,
@@ -162,7 +182,7 @@ export function PlaylistsCard() {
       })
       return response.data
     },
-    []
+    [offlineMode]
   )
 
   const loadPlaylists = useCallback(
@@ -314,7 +334,9 @@ export function PlaylistsCard() {
     reloadPlaylists()
   }, [reloadPlaylists])
 
-  const playlistActions: ActionDescriptor<Playlist>[] = [
+  // Both actions decide something on the server's behalf — sharing, and which
+  // collections to keep in sync — so offline mode shows the list bare.
+  const playlistActions: ActionDescriptor<Playlist>[] = offlineMode ? [] : [
     {
       key: "offlineSync",
       title: "Keep offline",
@@ -467,30 +489,34 @@ export function PlaylistsCard() {
       <Card className="mt-4">
         <CardHeader className="pb-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="inline-flex rounded-md border border-border overflow-hidden font-mono text-sm self-start">
-              <button
-                onClick={() => setMode('playlists')}
-                className={cn(
-                  "px-3 py-1.5 transition-colors",
-                  mode === 'playlists'
-                    ? "bg-matrix/20 text-matrix"
-                    : "text-text-muted hover:text-text-secondary"
-                )}
-              >
-                Playlists
-              </button>
-              <button
-                onClick={() => setMode('tagmix')}
-                className={cn(
-                  "px-3 py-1.5 border-l border-border transition-colors",
-                  mode === 'tagmix'
-                    ? "bg-matrix/20 text-matrix"
-                    : "text-text-muted hover:text-text-secondary"
-                )}
-              >
-                Tag Mix
-              </button>
-            </div>
+            {offlineMode ? (
+              <CardTitle className="font-mono text-sm text-matrix">Playlists</CardTitle>
+            ) : (
+              <div className="inline-flex rounded-md border border-border overflow-hidden font-mono text-sm self-start">
+                <button
+                  onClick={() => setMode('playlists')}
+                  className={cn(
+                    "px-3 py-1.5 transition-colors",
+                    mode === 'playlists'
+                      ? "bg-matrix/20 text-matrix"
+                      : "text-text-muted hover:text-text-secondary"
+                  )}
+                >
+                  Playlists
+                </button>
+                <button
+                  onClick={() => setMode('tagmix')}
+                  className={cn(
+                    "px-3 py-1.5 border-l border-border transition-colors",
+                    mode === 'tagmix'
+                      ? "bg-matrix/20 text-matrix"
+                      : "text-text-muted hover:text-text-secondary"
+                  )}
+                >
+                  Tag Mix
+                </button>
+              </div>
+            )}
             {mode === 'playlists' && (
               <PlaylistStatsBar totalPlaylists={totalPlaylists} loading={loading && tableRows.length === 0} />
             )}
@@ -513,10 +539,12 @@ export function PlaylistsCard() {
                 </div>
                 <div className="flex items-center gap-2">
                   <ViewToggle mode={listViewMode} onChange={setListViewMode} />
-                  <Button onClick={() => setCreateDialogOpen(true)} className="gap-2" title="Create Playlist">
-                    <PlusIcon className="h-4 w-4" />
-                    <span className="hidden sm:inline">Create Playlist</span>
-                  </Button>
+                  {!offlineMode && (
+                    <Button onClick={() => setCreateDialogOpen(true)} className="gap-2" title="Create Playlist">
+                      <PlusIcon className="h-4 w-4" />
+                      <span className="hidden sm:inline">Create Playlist</span>
+                    </Button>
+                  )}
                 </div>
               </div>
 

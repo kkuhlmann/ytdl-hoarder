@@ -14,7 +14,9 @@
 import { CHUNK_SIZE, chunkIndexRange, sliceWithinChunks, type ByteRange } from "./offlineRange"
 
 const DB_NAME = "ytdl-hoarder-offline"
-const DB_VERSION = 1
+// Bumping this is the whole migration: every store below is created under an
+// `if (!contains)` guard, so an upgrade only ever adds what a version lacks.
+const DB_VERSION = 2
 
 export const STORE_ITEMS = "items"
 export const STORE_CHUNKS = "chunks"
@@ -22,6 +24,7 @@ export const STORE_META = "meta"
 export const STORE_ASSETS = "assets"
 export const STORE_OUTBOX = "outbox"
 export const STORE_KV = "kv"
+export const STORE_PLAYLISTS = "playlists"
 
 /**
  * Where an item came from, which decides whether the budget may evict it.
@@ -70,6 +73,27 @@ export type OutboxEntry = {
 /** The serialized media record from the API, kept so the library renders offline. */
 export type OfflineMeta = { id: number; record: Record<string, unknown> }
 
+/**
+ * A playlist as last seen online: the list record plus its full ordered membership.
+ *
+ * Membership has to be its own snapshot because nothing else holds it — the media
+ * record carries no playlist ids, and an item's `source` names at most one
+ * collection and is overwritten to `manual` on a hand download. Which of these
+ * playlists is worth showing offline is decided at read time against the items
+ * store, so the snapshot itself is just server truth, unfiltered.
+ */
+export type OfflinePlaylist = {
+  id: number
+  name: string
+  description: string | null
+  source_url: string | null
+  created_at: string
+  updated_at: string
+  /** Every member, in playlist order. */
+  mediaIds: number[]
+  snapshotAt: number
+}
+
 let dbPromise: Promise<IDBDatabase> | null = null
 
 export function openOfflineDb(): Promise<IDBDatabase> {
@@ -99,6 +123,9 @@ export function openOfflineDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_KV)) {
         db.createObjectStore(STORE_KV, { keyPath: "key" })
+      }
+      if (!db.objectStoreNames.contains(STORE_PLAYLISTS)) {
+        db.createObjectStore(STORE_PLAYLISTS, { keyPath: "id" })
       }
     }
 
@@ -294,4 +321,25 @@ export function setKv<T>(key: string, value: T): Promise<void> {
   return withStore(STORE_KV, "readwrite", (tx) => {
     tx.objectStore(STORE_KV).put({ key, value })
   })
+}
+
+// --- playlists -------------------------------------------------------------
+
+/**
+ * Swap the whole snapshot in one transaction, so a playlist deleted upstream
+ * disappears here too and a failure part-way leaves the previous snapshot intact
+ * rather than a half-written one.
+ */
+export function replacePlaylists(playlists: OfflinePlaylist[]): Promise<void> {
+  return withStore(STORE_PLAYLISTS, "readwrite", (tx) => {
+    const store = tx.objectStore(STORE_PLAYLISTS)
+    store.clear()
+    for (const playlist of playlists) store.put(playlist)
+  })
+}
+
+export function allPlaylists(): Promise<OfflinePlaylist[]> {
+  return withStore(STORE_PLAYLISTS, "readonly", (tx) =>
+    promisify<OfflinePlaylist[]>(tx.objectStore(STORE_PLAYLISTS).getAll())
+  )
 }

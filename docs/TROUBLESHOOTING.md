@@ -113,6 +113,16 @@ pinned and takes it out of the eviction pool.
 the phone interrupts them. Nothing is lost — progress is saved after each chunk, and *Resume
 interrupted* in the storage dialog picks up where it stopped.
 
+**Buttons are missing, or a tab says it isn't available in offline mode.** By design. Offline mode
+is playback-only: anything that needs the server — new downloads, clips, subscriptions, tasks,
+stats, settings, sharing, tags and ratings, playlist editing, deleting, signing out — is hidden
+rather than left to fail. Switch the toggle off and it all comes back.
+
+**A playlist doesn't show up offline.** Only playlists with at least one downloaded item are listed,
+and each shows just its downloaded items. The playlist list itself is captured while the app is
+online and again at the moment you switch offline — so if you filled a playlist on another device,
+open the app online once (or toggle offline mode off and on) before leaving.
+
 ## Dev mode networking
 
 These apply only to dev mode (`docker-compose.dev.yml`). The published and prod modes serve the UI

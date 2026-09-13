@@ -12,6 +12,8 @@ export type Playlist = {
   user_id?: number
   /** First four member media ids, for the grid view's collage. */
   sample_media_ids?: number[]
+  /** Every member in playlist order; only present with `include_media_ids=true`. */
+  media_ids?: number[]
 }
 
 /**

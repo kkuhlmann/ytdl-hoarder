@@ -14,7 +14,7 @@ import axios from "axios"
 import { apiUrl, fetchPage, searchParam } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
 import { groupFilterParams } from "@/app/lib/groupFilter"
-import { fetchOfflineLibrary } from "@/app/lib/offlineLibrary"
+import { fetchOfflineLibrary, fetchOfflineStats } from "@/app/lib/offlineLibrary"
 import { useOffline } from "@/app/context/OfflineContext"
 import { OfflineUnavailable } from "@/app/_components/OfflineUnavailable"
 import { SubscriptionsCard } from "@/app/_components/SubscriptionsCard"
@@ -331,6 +331,8 @@ export default function HomePage() {
   }, [adminParam])
 
   const fetchMediaStats = useCallback((search?: string, status?: string) => {
+    if (offlineMode) return fetchOfflineStats(search)
+
     return axios
       .get(apiUrl(mediaApi.stats), {
         params: { search: searchParam(search), status, ...adminParam },
@@ -344,7 +346,7 @@ export default function HomePage() {
           downloads_with_transcripts: 0,
         }
       })
-  }, [adminParam])
+  }, [adminParam, offlineMode])
 
   return (
     <div className="min-h-screen pb-[env(safe-area-inset-bottom)]">
@@ -368,7 +370,10 @@ export default function HomePage() {
                     fetchStats={fetchMediaStats}
                     downloadOptions={downloadOptions}
                     setDownloadOptions={setdownloadOptions}
-                    status={mediaStatus}
+                    // The offline library only holds finished downloads, and the
+                    // DELETED/SKIPPED action sets are server writes — so a scope
+                    // chosen before the switch must not survive it.
+                    status={offlineMode ? "COMPLETE" : mediaStatus}
                     setStatus={setMediaStatus}
                     search={search}
                     setSearch={setSearch}
@@ -398,6 +403,8 @@ export default function HomePage() {
                     setSubscriptionSearch={setSubscriptionSearch}
                   />
                 </motion.div>
+              ) : view === "clips" && offlineMode ? (
+                <OfflineUnavailable key="clips-offline" label="Clips" />
               ) : view === "clips" ? (
                 <motion.div
                   key="clips"

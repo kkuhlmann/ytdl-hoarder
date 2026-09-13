@@ -79,20 +79,27 @@ export function MobileNavMenu({
               Offline mode
             </DropdownMenuCheckboxItem>
             <DropdownMenuItem onSelect={onOpenStorage}>Offline storage…</DropdownMenuItem>
-            <DropdownMenuSeparator />
+            {!offlineMode && <DropdownMenuSeparator />}
           </>
         )}
 
-        {isAdmin && (
-          <DropdownMenuCheckboxItem
-            checked={adminMode}
-            onCheckedChange={(checked) => setAdminMode(checked === true)}
-          >
-            Admin view
-          </DropdownMenuCheckboxItem>
+        {/* Account entries are server actions. Signing out offline would discard
+            the cached identity that unlocks the downloaded library, with no
+            server to sign back in against, so they wait for the connection. */}
+        {!offlineMode && (
+          <>
+            {isAdmin && (
+              <DropdownMenuCheckboxItem
+                checked={adminMode}
+                onCheckedChange={(checked) => setAdminMode(checked === true)}
+              >
+                Admin view
+              </DropdownMenuCheckboxItem>
+            )}
+            <DropdownMenuItem onSelect={onOpenChangePassword}>Change password…</DropdownMenuItem>
+            <DropdownMenuItem onSelect={onSignOut}>Sign out</DropdownMenuItem>
+          </>
         )}
-        <DropdownMenuItem onSelect={onOpenChangePassword}>Change password…</DropdownMenuItem>
-        <DropdownMenuItem onSelect={onSignOut}>Sign out</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )

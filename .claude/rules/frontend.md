@@ -111,8 +111,34 @@ Offline playback is a service worker (`sw/sw.ts`) plus an IndexedDB store
   rules about what *not* to claim are testable: the SSE stream must never be intercepted
   (`useTaskProgress` would wait forever), and no navigation fallback may apply under `/api/`.
 - **`useMediaElement` needs no offline branch.** It points `src` at `/api/media/{id}` and the worker
-  answers from storage, so video, audio, seeking, the clip editor and Media Session lock-screen
-  controls all work offline unchanged.
+  answers from storage, so video, audio, seeking and Media Session lock-screen controls all work
+  offline unchanged. (The clip *editor* would play too, but clipping is a server job, so its entry
+  points are hidden offline — next bullet.)
+- **Offline mode is playback-only, and the UI enforces it by hiding, not disabling.** Nothing that
+  writes to the server or reads live server state is rendered while the mode is on: no download
+  form, clip/tag/share/delete/transcript actions, ratings clicks, bulk bar, scope selector,
+  semantic search, group-by, playlist create/reorder/remove/delete/share/sync, Sign out, Change
+  Password, admin view. A new server-touching control must join one of the gates: `buildMediaActions`
+  takes `offlineMode` and returns only the offline button (that single choke point covers the
+  library, playlist detail and tag mix via `MediaListView`, which also drops `onRate` so
+  `StarRating` renders read-only); `page.tsx` shows `OfflineUnavailable` for Subscriptions, Clips,
+  Tasks, Stats and Settings and pins the library scope to `COMPLETE`; `DownloadsCard`,
+  `PlaylistsCard`, `PlaylistDetailView`, `NavigationBar` and `MobileNavMenu` each read `useOffline()`
+  and skip their own controls. Reads that can be answered locally are swapped rather than hidden
+  (`fetchOfflineStats`, `offlineTags`, the playlist helpers below); reads that can't are simply
+  not issued (`MediaPlayerContext`'s per-track detail GET, the storage poll).
+- **Playlists work offline from a membership snapshot, not from the items store.** A downloaded
+  record carries no playlist ids and `OfflineItem.source` names at most one collection (overwritten
+  to `manual` on a hand download), so `offlinePlaylists.ts` keeps its own `playlists` store: every
+  playlist's ordered `media_ids`, fetched in one call from `GET /playlists?include_media_ids=true`
+  by `snapshotPlaylists()`. `OfflineProvider` refreshes it on **both** edges of the switch — online
+  launches keep it fresh, and switching offline is usually done while still connected, so it is the
+  last-chance refresh. Which playlists to *show* is decided at read time (≥ 1 downloaded member),
+  with counts and durations describing what is on the device. Adding the store was a `DB_VERSION`
+  bump: every store in `openOfflineDb` is created under an `if (!contains)` guard, so bumping the
+  version is the whole migration. Offline playback of a playlist goes through `playMediaQueue` with
+  the stored tracks — a real playlist id is fine there, and `setQueueResume` skips its refetch
+  offline as it already does for virtual ids.
 - **Offline capability is read per-component, not passed down.** `OfflineDownloadButton` and
   `CollectionOfflineButton` call their own hooks rather than taking handlers through
   `buildMediaActions`, deliberately avoiding the `onClip` trap above — an optional prop whose button

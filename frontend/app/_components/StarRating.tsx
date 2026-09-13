@@ -6,7 +6,8 @@ import { StarIcon as StarOutline } from "@heroicons/react/24/outline"
 
 type StarRatingProps = {
   rating: number | null | undefined
-  onRate: (rating: number | null) => void
+  /** Omit to render the rating read-only: no buttons, no hover preview. */
+  onRate?: (rating: number | null) => void
   compact?: boolean
   /** Overrides the tooltip, for surfaces where a star means something other than "rate this". */
   titleFor?: (star: number, isSelected: boolean) => string
@@ -20,6 +21,14 @@ export function StarRating({ rating, onRate, compact = false, titleFor = rateTit
   const [hoverRating, setHoverRating] = useState<number | null>(null)
   const displayRating = hoverRating ?? rating ?? 0
   const size = compact ? "h-3.5 w-3.5" : "h-4 w-4"
+  const star = (index: number) =>
+    index <= displayRating ? (
+      <StarSolid className={`${size} text-status-warning`} />
+    ) : (
+      <StarOutline
+        className={`${size} text-text-muted/40 ${onRate ? "hover:text-status-warning/60" : ""}`}
+      />
+    )
 
   // Safety net: if onMouseLeave was missed on a fast mouse exit,
   // check on the next frame whether the container is still hovered
@@ -33,28 +42,37 @@ export function StarRating({ rating, onRate, compact = false, titleFor = rateTit
     return () => cancelAnimationFrame(id)
   }, [hoverRating])
 
+  if (!onRate) {
+    return (
+      <div
+        className="inline-flex items-center gap-0"
+        title={rating ? `Rated ${rating} star${rating > 1 ? "s" : ""}` : "Not rated"}
+      >
+        {[1, 2, 3, 4, 5].map((index) => (
+          <span key={index}>{star(index)}</span>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div
       ref={containerRef}
       className="inline-flex items-center gap-0"
       onMouseLeave={() => setHoverRating(null)}
     >
-      {[1, 2, 3, 4, 5].map((star) => (
+      {[1, 2, 3, 4, 5].map((index) => (
         <button
-          key={star}
+          key={index}
           onClick={(e) => {
             e.stopPropagation()
-            onRate(rating === star ? null : star)
+            onRate(rating === index ? null : index)
           }}
-          onMouseEnter={() => setHoverRating(star)}
+          onMouseEnter={() => setHoverRating(index)}
           className="p-0 transition-colors"
-          title={titleFor(star, rating === star)}
+          title={titleFor(index, rating === index)}
         >
-          {star <= displayRating ? (
-            <StarSolid className={`${size} text-status-warning`} />
-          ) : (
-            <StarOutline className={`${size} text-text-muted/40 hover:text-status-warning/60`} />
-          )}
+          {star(index)}
         </button>
       ))}
     </div>

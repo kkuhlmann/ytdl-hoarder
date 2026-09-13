@@ -20,6 +20,7 @@ import { useMediaActions } from "@/app/_hooks/useMediaActions"
 import type { ViewMode } from "@/app/_hooks/useViewMode"
 import { useAuth } from "@/app/context/AuthContext"
 import { useMediaPlayer } from "@/app/context/MediaPlayerContext"
+import { useOffline } from "@/app/context/OfflineContext"
 import type {
   Download,
   SortDirection,
@@ -97,6 +98,7 @@ export function MediaListView<T extends Download>({
 }: MediaListViewProps<T>) {
   const { user } = useAuth()
   const { savedPositions } = useMediaPlayer()
+  const { offlineMode } = useOffline()
   const dialogs = useMediaDialogs()
   const actions = useMediaActions({ patchRow, onRefresh, onTagsChange })
 
@@ -114,10 +116,13 @@ export function MediaListView<T extends Download>({
     [savedPositions],
   )
 
-  const rate = useCallback(
+  const rateOnline = useCallback(
     (mediaId: number, rating: number | null) => actions.rate(mediaId, rating),
     [actions],
   )
+  // Offline mode is playback-only: ratings stay visible (the offline list sorts
+  // and filters on them) but a click would be a server write, so no handler.
+  const rate = offlineMode ? undefined : rateOnline
 
   const buildActions = (compact: boolean) =>
     [
@@ -127,6 +132,7 @@ export function MediaListView<T extends Download>({
         actions,
         dialogs,
         compact,
+        offlineMode,
         onClip: onClip as ((row: Download) => void) | undefined,
         onPopulateSkipped: onPopulateSkipped as
           | ((row: Download) => void)
@@ -171,7 +177,7 @@ export function MediaListView<T extends Download>({
                 status === "COMPLETE" ? (
                   <StarRating
                     rating={row.rating}
-                    onRate={(r) => rate(row.media_details_id, r)}
+                    onRate={rate && ((r) => rate(row.media_details_id, r))}
                     compact
                   />
                 ) : undefined
@@ -204,11 +210,13 @@ export function MediaListView<T extends Download>({
         />
       )}
 
-      <MediaActionDialogs
-        dialogs={dialogs}
-        actions={actions}
-        allTags={allTags}
-      />
+      {!offlineMode && (
+        <MediaActionDialogs
+          dialogs={dialogs}
+          actions={actions}
+          allTags={allTags}
+        />
+      )}
     </>
   )
 }

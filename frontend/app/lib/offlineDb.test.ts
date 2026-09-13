@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest"
 
 import {
   allItems,
+  allPlaylists,
   clearOutboxEntries,
   deleteItem,
   enqueueOutbox,
@@ -16,10 +17,12 @@ import {
   putMeta,
   readOutbox,
   readRange,
+  replacePlaylists,
   storedBytesOf,
   touchItem,
   usedBytes,
   type OfflineItem,
+  type OfflinePlaylist,
 } from "./offlineDb"
 import { CHUNK_SIZE } from "./offlineRange"
 
@@ -167,5 +170,34 @@ describe("playback outbox", () => {
     await clearOutboxEntries([1])
 
     expect((await readOutbox()).map((e) => e.mediaId)).toEqual([2])
+  })
+})
+
+describe("playlist snapshot", () => {
+  const playlist = (id: number, mediaIds: number[]): OfflinePlaylist => ({
+    id,
+    name: `Playlist ${id}`,
+    description: null,
+    source_url: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    mediaIds,
+    snapshotAt: 1,
+  })
+
+  it("replaces the previous snapshot wholesale", async () => {
+    await replacePlaylists([playlist(1, [10, 11]), playlist(2, [12])])
+    await replacePlaylists([playlist(2, [12, 13])])
+
+    const stored = await allPlaylists()
+    expect(stored.map((p) => p.id)).toEqual([2])
+    expect(stored[0].mediaIds).toEqual([12, 13])
+  })
+
+  it("an empty snapshot clears the store", async () => {
+    await replacePlaylists([playlist(1, [10])])
+    await replacePlaylists([])
+
+    expect(await allPlaylists()).toEqual([])
   })
 })

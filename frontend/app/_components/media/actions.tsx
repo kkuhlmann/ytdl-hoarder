@@ -202,6 +202,15 @@ export type BuildMediaActionsArgs = {
   onPopulateSkipped?: (row: Download) => void
   /** True in the grid/card overlay, where text sits tighter. */
   compact?: boolean
+  /** True when the app is showing its downloaded library. */
+  offlineMode?: boolean
+}
+
+const OFFLINE_ACTION: ActionDescriptor<Download> = {
+  key: "offline",
+  title: "Save for offline",
+  headerIcon: ArrowDownTrayIcon,
+  render: (row) => <OfflineDownloadButton row={row} />,
 }
 
 /**
@@ -209,6 +218,10 @@ export type BuildMediaActionsArgs = {
  *
  * Returned as an array so surfaces can extend it by concatenation — the
  * playlist track row is these actions plus move up / move down / remove.
+ *
+ * Offline mode is playback-only, so it keeps just the offline button (a local
+ * remove). Everything else here writes to the server, and offering a button
+ * whose only outcome is a failed request reads as a broken app.
  */
 export function buildMediaActions({
   status,
@@ -218,7 +231,10 @@ export function buildMediaActions({
   onClip,
   onPopulateSkipped,
   compact = false,
+  offlineMode = false,
 }: BuildMediaActionsArgs): ActionDescriptor<Download>[] {
+  if (offlineMode) return [OFFLINE_ACTION]
+
   if (status === "SKIPPED") {
     return [
       {
@@ -318,12 +334,7 @@ export function buildMediaActions({
       buttonClassName: "hover:bg-matrix/20",
       iconClassName: "text-text-muted hover:text-matrix",
     },
-    {
-      key: "offline",
-      title: "Save for offline",
-      headerIcon: ArrowDownTrayIcon,
-      render: (row) => <OfflineDownloadButton row={row} />,
-    },
+    OFFLINE_ACTION,
     {
       key: "clip",
       title: "Create clip",

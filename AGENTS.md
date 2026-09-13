@@ -74,7 +74,10 @@ Next 16 (Turbopack, flat ESLint config, Tailwind v4 CSS-first) statically export
 everything else in `app/_hooks/`. **Offline mode** adds a service worker built out of `frontend/sw/`
 by a `postbuild` step; it is type-checked separately against `lib: WebWorker`, so the modules it
 shares with the app must stay free of `window`/`document` — see `.claude/rules/frontend.md`. It only
-registers over HTTPS, which is why `docs/CONFIGURATION.md` carries a TLS section. The toolchain carries several constraints that are easy to undo by
+registers over HTTPS, which is why `docs/CONFIGURATION.md` carries a TLS section. **Offline mode is
+playback-only**: every server-touching control is hidden behind `useOffline()` while it is on, and
+playlists come from a membership snapshot (`GET /playlists?include_media_ids=true`) — the gates and
+the snapshot's semantics are in that rule file too. The toolchain carries several constraints that are easy to undo by
 accident — Tailwind's `@theme inline` block, the non-monotonic radius scale, `@source` paths,
 `allowedDevOrigins` — all in `.claude/rules/frontend.md`.
 

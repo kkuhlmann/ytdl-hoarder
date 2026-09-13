@@ -7,10 +7,10 @@ import { useOffline } from "@/app/context/OfflineContext"
 /**
  * Placeholder for the views that need the server.
  *
- * Subscriptions, tasks, stats and settings are all live server state with nothing
- * cached behind them. Shown instead of letting them mount and hang on a request
- * that cannot complete: a spinner that never resolves reads as a broken app, and
- * an error toast reads as a bug rather than a mode the user chose.
+ * Subscriptions, clips, tasks, stats and settings are all live server state with
+ * nothing cached behind them. Shown instead of letting them mount and hang on a
+ * request that cannot complete: a spinner that never resolves reads as a broken
+ * app, and an error toast reads as a bug rather than a mode the user chose.
  */
 export function OfflineUnavailable({ label }: { label: string }) {
   const { setOfflineMode } = useOffline()

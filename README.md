@@ -43,7 +43,7 @@ accounts and no cloud dependency.
 | **Statistics** | Storage breakdown, download trends over time, transcription coverage, and filterable engagement metrics. |
 | **Multi-user and sharing** | Accounts with admin approval, per-user storage limits, and sharing of media, subscriptions, playlists, and clips. Media already downloaded by one user is granted to the next rather than downloaded twice. |
 | **Boolean search** | The Downloads search box matches channel and title and supports `&&` (AND) and `\|\|` (OR); `&&` binds tighter. Single `&` and `\|` are matched literally. The operators narrow transcript search results too. |
-| **Offline mode** | Save audio and video to a phone and play it with no connection — the app itself keeps working offline, installed to the home screen. Downloads can be pinned per item or kept in sync with a playlist or subscription, inside a storage budget. Needs HTTPS and a production install; see [On mobile](#on-mobile). |
+| **Offline mode** | Save audio and video to a phone and play it with no connection — the app itself keeps working offline, installed to the home screen. Downloads can be pinned per item or kept in sync with a playlist or subscription, inside a storage budget; playlists with downloaded items play offline too. Playback-only while switched on. Needs HTTPS and a production install; see [On mobile](#on-mobile). |
 | **70+ themes** | Built-in themes from retro terminal to modern light and dark palettes, switchable instantly. |
 | **Audio visualizer** | Optional reactive visualizer behind the player bar for audio-only tracks, following the active theme's colors. Desktop only, to protect lock-screen playback on iOS. |
 
@@ -105,6 +105,15 @@ With both requirements met:
 4. Tap the **signal icon** to switch on offline mode. The library then shows only what is on the
    device, and playback positions are saved locally and sent to the server the next time you switch
    back.
+
+**Offline mode is for playing what you have downloaded, and nothing else.** The Downloads tab shows
+the saved items with search, tag and rating filters and sorting; the Playlists tab shows every
+playlist that contains at least one downloaded item, with just those items, in playlist order, ready
+to play or shuffle. Everything that needs the server waits until you switch back: new downloads,
+clips, subscriptions, tasks, stats, settings, sharing, editing tags or ratings, adding to or
+reordering playlists, deleting — those buttons and tabs are simply absent rather than failing. The
+playlist list is captured whenever the app is online and again at the moment you switch offline, so
+a playlist you just filled is there when you go.
 
 Offline mode is a manual switch, never automatic — a phone reports itself online while attached to a
 hotel captive portal, so guessing would swap the library out at the worst moment.
