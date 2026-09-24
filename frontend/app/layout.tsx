@@ -16,7 +16,15 @@ export const metadata: Metadata = {
   description: "Helper for managing YouTube downloads",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "Hoarder", statusBarStyle: "black-translucent" },
-  icons: { apple: "/apple-touch-icon.png" },
+  // Any explicit `icons` object makes Next drop the app/icon.svg file convention,
+  // so the favicon has to be listed here alongside the apple icon.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 }
 
 // themeColor is a single value while the app ships 92 themes, so it names the
