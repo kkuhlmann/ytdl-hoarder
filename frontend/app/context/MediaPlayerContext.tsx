@@ -5,6 +5,7 @@ import axios from "axios"
 import { apiUrl } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
 import { saveRating } from "@/app/_hooks/useMediaActions"
+import { useOffline } from "@/app/context/OfflineContext"
 
 // Virtual (non-DB) playlist ids for on-the-fly queues: the tag-based "Tag Mix",
 // and the media library's current filter. Negative so they can never collide
@@ -145,6 +146,7 @@ function retainCurrent(rows: PlaylistMedia[], current: PlaylistMedia, at: number
 }
 
 export function MediaPlayerProvider({ children }: { children: ReactNode }) {
+  const { offlineMode } = useOffline()
   const [mediaPlayer, setMediaPlayer] = useState<MediaPlayerState>({
     audioVisible: false,
     videoVisible: false,
@@ -203,6 +205,9 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!mediaPlayer.media_details_id) return
+    // Offline the queue entry already carries everything playback needs; what
+    // this adds (rating, plays, source url) is server state, shown only online.
+    if (offlineMode) return
 
     const controller = new AbortController()
     axios
@@ -233,7 +238,7 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
       })
 
     return () => controller.abort()
-  }, [mediaPlayer.media_details_id])
+  }, [mediaPlayer.media_details_id, offlineMode])
 
   const openAudioPlayer = useCallback((audio: Omit<MediaPlayerState, 'autoplayEnabled' | 'shuffleEnabled' | 'resumeEnabled' | 'audioVisible' | 'videoVisible' | 'activeMediaType'> & { autoplayEnabled?: boolean; visible?: boolean }) => {
     setMediaPlayer((prev) => ({
@@ -454,17 +459,18 @@ export function MediaPlayerProvider({ children }: { children: ReactNode }) {
    *
    * A virtual playlist is skipped rather than special-cased later: it has no
    * endpoint to refetch from, and its rows come from the media list already
-   * carrying positions.
+   * carrying positions. So does an offline queue, whose rows are the stored
+   * media records — and whose endpoint is unreachable anyway.
    */
   const setQueueResume = useCallback((playlistId: number, enabled: boolean) => {
     if (playlistIdRef.current !== playlistId) return
     setMediaPlayer((prev) => (
       prev.playlistId === playlistId ? { ...prev, resumeEnabled: enabled } : prev
     ))
-    if (enabled && !isVirtualPlaylist(playlistId)) {
+    if (enabled && !isVirtualPlaylist(playlistId) && !offlineMode) {
       void syncPlaylistQueue(playlistId, true)
     }
-  }, [syncPlaylistQueue])
+  }, [syncPlaylistQueue, offlineMode])
 
   /**
    * Drops the queue while the current track plays on, stopping only at its end.

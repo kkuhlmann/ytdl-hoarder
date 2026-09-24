@@ -10266,3 +10266,35 @@
   background-color: color-mix(in srgb, var(--matrix-green) 20%, transparent) !important;
   border-color: var(--matrix-green) !important;
 }
+
+/* Standalone iOS paints the clock/battery white over whatever sits under the
+   status bar (statusBarStyle black-translucent, layout.tsx). Dark themes show the
+   nav through the strip; light ones need a dark band there — #0a0a0a is the same
+   value themeColor and the manifest use. */
+:is(
+  [data-theme="xp"],
+  [data-theme="vista"],
+  [data-theme="win7"],
+  [data-theme="win10"],
+  [data-theme="win11"],
+  [data-theme="winme"],
+  [data-theme="win2k"],
+  [data-theme="aqua"],
+  [data-theme="tiger"],
+  [data-theme="leopard"],
+  [data-theme="yosemite"],
+  [data-theme="macoslight"],
+  [data-theme="macos9"],
+  [data-theme="aero"],
+  [data-theme="web2"],
+  [data-theme="y2k"],
+  [data-theme="google"],
+  [data-theme="reddit"],
+  [data-theme="solarized-light"],
+  [data-theme="limewire"],
+  [data-theme="construction"],
+  [data-theme="barbie"],
+  [data-theme="miami"]
+) .status-bar-inset {
+  background-color: #0a0a0a;
+}

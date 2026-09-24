@@ -56,12 +56,16 @@ async def get_all_playlists(
     sort_by: str | None = None,
     sort_direction: str = 'desc',
     user_id: int | None = None,
+    include_media_ids: bool = False,
 ) -> dict[str, Any]:
     """Get all playlists with optional filtering and pagination.
 
     Args:
         user_id: When provided, filter to playlists owned by this user OR
                  shared via PlaylistAccess. When None, no user filter (admin view).
+        include_media_ids: Also emit each playlist's full member id list in playlist
+                 order as `media_ids`. Off by default — the paginated UI list never
+                 needs it; the offline snapshot is the one caller that does.
 
     Returns dict with count_records, page_count, and records (with media_count and total_duration).
     """
@@ -117,6 +121,10 @@ async def get_all_playlists(
             order_by=(PlaylistMedia.position.asc(),),
         )
 
+        media_ids_by_id: dict[int, list[int]] = {}
+        if include_media_ids:
+            media_ids_by_id = await _get_media_ids_for_playlists(session, playlist_ids)
+
         serialized_records = []
         for playlist in records:
             record_dict = playlist.model_dump(mode='json')
@@ -125,6 +133,8 @@ async def get_all_playlists(
             record_dict['media_count'] = stats['media_count']
             record_dict['total_duration'] = stats['total_duration']
             record_dict['sample_media_ids'] = samples_by_id.get(playlist.id, [])
+            if include_media_ids:
+                record_dict['media_ids'] = media_ids_by_id.get(playlist.id, [])
 
             serialized_records.append(record_dict)
 
@@ -690,6 +700,23 @@ async def _get_stats_for_playlists(session, playlist_ids: list[int]) -> dict[int
         row.playlist_id: {'media_count': row.media_count, 'total_duration': row.total_duration}
         for row in result.all()
     }
+
+
+async def _get_media_ids_for_playlists(session, playlist_ids: list[int]) -> dict[int, list[int]]:
+    """Every member id of many playlists in one query, each list in playlist order."""
+    if not playlist_ids:
+        return {}
+
+    stmt = (
+        select(PlaylistMedia.playlist_id, PlaylistMedia.media_details_id)
+        .where(PlaylistMedia.playlist_id.in_(playlist_ids))
+        .order_by(PlaylistMedia.playlist_id, PlaylistMedia.position.asc())
+    )
+    result = await session.execute(stmt)
+    media_ids_by_id: dict[int, list[int]] = {}
+    for row in result.all():
+        media_ids_by_id.setdefault(row.playlist_id, []).append(row.media_details_id)
+    return media_ids_by_id
 
 
 async def get_playlist_ids_for_media(

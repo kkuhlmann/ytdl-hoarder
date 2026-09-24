@@ -14,6 +14,9 @@ import axios from "axios"
 import { apiUrl, fetchPage, searchParam } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
 import { groupFilterParams } from "@/app/lib/groupFilter"
+import { fetchOfflineLibrary, fetchOfflineStats } from "@/app/lib/offlineLibrary"
+import { useOffline } from "@/app/context/OfflineContext"
+import { OfflineUnavailable } from "@/app/_components/OfflineUnavailable"
 import { SubscriptionsCard } from "@/app/_components/SubscriptionsCard"
 import { ClipsCard } from "@/app/_components/ClipsCard"
 import { PlaylistsCard } from "@/app/_components/PlaylistsCard"
@@ -85,6 +88,7 @@ export default function HomePage() {
   const [mediaStatus, setMediaStatus] = useState("COMPLETE")
   const { view, setView } = useView()
   const { adminMode, adminParam } = useAdmin()
+  const { offlineMode } = useOffline()
 
   // Each add-form belongs to one view and reads as empty from anywhere else, so
   // no effect is needed to clear it on navigation.
@@ -226,6 +230,21 @@ export default function HomePage() {
       groupFilter?: GroupLeafFilter | null,
       pageSize?: number,
     ) => {
+      // Offline mode reads the downloaded records instead. Swapping the fetcher
+      // here rather than inside DownloadsCard keeps the swap to one place: this is
+      // the only path by which the library list is loaded.
+      if (offlineMode) {
+        return fetchOfflineLibrary({
+          search,
+          pageNumber,
+          sortBy,
+          sortDirection,
+          tagIds,
+          minRating,
+          pageSize,
+        })
+      }
+
       const params: Record<string, any> = {
         search: searchParam(search),
         status: status,
@@ -249,7 +268,7 @@ export default function HomePage() {
         return { pageCount: 0, tableRows: [] }
       })
     },
-    [adminParam],
+    [adminParam, offlineMode],
   )
 
   // useCallback like its siblings above/below: SubscriptionsCard now lists this
@@ -312,6 +331,8 @@ export default function HomePage() {
   }, [adminParam])
 
   const fetchMediaStats = useCallback((search?: string, status?: string) => {
+    if (offlineMode) return fetchOfflineStats(search)
+
     return axios
       .get(apiUrl(mediaApi.stats), {
         params: { search: searchParam(search), status, ...adminParam },
@@ -325,10 +346,10 @@ export default function HomePage() {
           downloads_with_transcripts: 0,
         }
       })
-  }, [adminParam])
+  }, [adminParam, offlineMode])
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen pb-[env(safe-area-inset-bottom)]">
       <main
         className={`w-full lg:container mx-auto px-2 pt-4 md:px-4 md:pt-6 ${audioPlayer.visible ? (infoExpanded ? "pb-32 sm:pb-36" : "pb-24 sm:pb-28") : "pb-4 md:pb-6"}`}
       >
@@ -349,7 +370,10 @@ export default function HomePage() {
                     fetchStats={fetchMediaStats}
                     downloadOptions={downloadOptions}
                     setDownloadOptions={setdownloadOptions}
-                    status={mediaStatus}
+                    // The offline library only holds finished downloads, and the
+                    // DELETED/SKIPPED action sets are server writes — so a scope
+                    // chosen before the switch must not survive it.
+                    status={offlineMode ? "COMPLETE" : mediaStatus}
                     setStatus={setMediaStatus}
                     search={search}
                     setSearch={setSearch}
@@ -359,6 +383,8 @@ export default function HomePage() {
                     setSemanticWeight={setSemanticWeight}
                   />
                 </motion.div>
+              ) : view === "subscriptions" && offlineMode ? (
+                <OfflineUnavailable key="subscriptions-offline" label="Subscriptions" />
               ) : view === "subscriptions" ? (
                 <motion.div
                   key="subscriptions"
@@ -377,6 +403,8 @@ export default function HomePage() {
                     setSubscriptionSearch={setSubscriptionSearch}
                   />
                 </motion.div>
+              ) : view === "clips" && offlineMode ? (
+                <OfflineUnavailable key="clips-offline" label="Clips" />
               ) : view === "clips" ? (
                 <motion.div
                   key="clips"
@@ -397,6 +425,8 @@ export default function HomePage() {
                 >
                   <PlaylistsCard />
                 </motion.div>
+              ) : view === "tasks" && offlineMode ? (
+                <OfflineUnavailable key="tasks-offline" label="Tasks" />
               ) : view === "tasks" ? (
                 <motion.div
                   key="tasks"
@@ -410,6 +440,8 @@ export default function HomePage() {
                     fetchStats={fetchTaskStats}
                   />
                 </motion.div>
+              ) : view === "stats" && offlineMode ? (
+                <OfflineUnavailable key="stats-offline" label="Stats" />
               ) : view === "stats" ? (
                 <motion.div
                   key="stats"
@@ -420,6 +452,8 @@ export default function HomePage() {
                 >
                   <StatsCard />
                 </motion.div>
+              ) : view === "settings" && offlineMode ? (
+                <OfflineUnavailable key="settings-offline" label="Settings" />
               ) : view === "settings" && adminMode ? (
                 <motion.div
                   key="settings"
@@ -448,7 +482,7 @@ export default function HomePage() {
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 100, opacity: 0 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="pointer-events-auto bg-bg-terminal/95 backdrop-blur-sm border-t border-border overflow-hidden"
+              className="pointer-events-auto bg-bg-terminal/95 backdrop-blur-sm border-t border-border overflow-hidden pb-[env(safe-area-inset-bottom)]"
             >
             {visualizerStyle && (
               <AudioVisualizer

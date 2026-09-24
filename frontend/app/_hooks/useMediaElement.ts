@@ -1,9 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
-import axios from "axios"
 import { apiUrl } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
+import { savePlaybackPosition } from "@/app/lib/playbackSync"
 import {
   reportMediaSessionPosition,
   useMediaSessionActionHandlers,
@@ -134,12 +134,7 @@ export function useMediaElement<T extends HTMLMediaElement>(
   useEffect(() => {
     if (isClip) return
     if (Math.abs(currentTime - lastSavedPositionRef.current) >= 5) {
-      axios
-        .patch(apiUrl(mediaApi.playback(id)), {
-          playback_position: currentTime,
-          last_accessed: new Date().toISOString(),
-        })
-        .catch(() => {})
+      savePlaybackPosition(id, currentTime)
       lastSavedPositionRef.current = currentTime
       // Publish on the same beat as the save, so a list's progress bar and the
       // stored position can never disagree.

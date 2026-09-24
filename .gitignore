@@ -13,9 +13,19 @@
 !.env.sample
 config.yml*
 *.bak
+# Nothing here generates TLS material, but offline mode requires HTTPS in front
+# of :8000 and docs/CONFIGURATION.md walks through self-signed certs — which get
+# generated wherever the reader happens to be standing.
+*.pem
+*.key
+*.crt
+*.p12
+*.orig
+*.rej
 .claude/settings.local.json
 
 __pycache__*
+*.py[cod]
 # Runtime data: cookies.txt, admin-recovery.txt, backgrounds, DB backups, and the
 # default media roots. The contents are ignored but the directory skeleton is
 # tracked — Docker creates a missing bind-mount source as root:root while the

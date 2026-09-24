@@ -27,7 +27,9 @@ import { useViewMode } from "@/app/_hooks/useViewMode"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import type { ActionDescriptor } from "@/app/_components/data/ActionList"
 import { useMediaPlayer } from "@/app/context/MediaPlayerContext"
+import { useOffline } from "@/app/context/OfflineContext"
 import { apiUrl } from "@/app/lib/api"
+import { offlinePlaylistQueue } from "@/app/lib/offlinePlaylists"
 import type { Download, SortDirection } from "@/app/types/DownloadsOptions"
 import type { PlaylistTrack } from "@/app/types/PlaylistOptions"
 
@@ -80,7 +82,11 @@ export function PlaylistDetailView({
   reorderTracks,
   restoreTracks,
 }: PlaylistDetailViewProps) {
-  const { playPlaylist, mediaPlayer, syncPlaylistQueue, setQueueResume } = useMediaPlayer()
+  const { playPlaylist, playMediaQueue, mediaPlayer, syncPlaylistQueue, setQueueResume } =
+    useMediaPlayer()
+  // Offline mode is playback-only: every reorder/remove/delete control below is a
+  // server write and goes away, and playback is queued from the stored tracks.
+  const { offlineMode } = useOffline()
   const [viewMode, setViewMode] = useViewMode("playlistDetail")
   const [resumeEnabled, setResumeEnabled] = useResumePlayback(playlistId)
   const bulk = useMediaBulkSelection(tracks)
@@ -93,7 +99,25 @@ export function PlaylistDetailView({
   // than hidden: hiding them would change the actions column's width per sort
   // mode and make the fixed header icon legend lie about what's below it. The
   // drag handle does go away, but it lives in the fixed-width # column.
-  const reorderEnabled = sortBy === "position" && sortDirection === "asc"
+  const reorderEnabled = sortBy === "position" && sortDirection === "asc" && !offlineMode
+
+  const play = useCallback(
+    async (shuffle: boolean, targetMediaDetailsId: number) => {
+      if (offlineMode) {
+        playMediaQueue({
+          playlistId,
+          playlistName,
+          media: await offlinePlaylistQueue(playlistId),
+          shuffle,
+          targetMediaDetailsId,
+          resume: resumeEnabled,
+        })
+        return
+      }
+      await playPlaylist(playlistId, playlistName, shuffle, targetMediaDetailsId, resumeEnabled)
+    },
+    [offlineMode, playMediaQueue, playPlaylist, playlistId, playlistName, resumeEnabled],
+  )
 
   const startPlayback = useCallback(
     async (track: PlaylistTrack) => {
@@ -103,10 +127,10 @@ export function PlaylistDetailView({
       }
       // Awaited: the player must have set videoVisible before the parent
       // decides whether to swap in the inline video player.
-      await playPlaylist(playlistId, playlistName, false, track.media_details_id, resumeEnabled)
+      await play(false, track.media_details_id)
       if (track.media_type === "VIDEO") onVideoPlayback?.()
     },
-    [playPlaylist, playlistId, playlistName, onVideoPlayback, resumeEnabled],
+    [play, onVideoPlayback],
   )
 
   const toggleResume = useCallback(
@@ -123,7 +147,7 @@ export function PlaylistDetailView({
       toast.error("No playable tracks in this playlist")
       return
     }
-    await playPlaylist(playlistId, playlistName, false, firstPlayable.media_details_id, resumeEnabled)
+    await play(false, firstPlayable.media_details_id)
     if (firstPlayable.media_type === "VIDEO") onVideoPlayback?.()
   }
 
@@ -134,7 +158,7 @@ export function PlaylistDetailView({
       return
     }
     const random = playable[Math.floor(Math.random() * playable.length)]
-    await playPlaylist(playlistId, playlistName, true, random.media_details_id, resumeEnabled)
+    await play(true, random.media_details_id)
     if (random.media_type === "VIDEO") onVideoPlayback?.()
   }
 
@@ -308,31 +332,35 @@ export function PlaylistDetailView({
           />
           <ViewToggle mode={viewMode} onChange={setViewMode} />
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowPlaylistDelete(true)}
-          className="gap-1.5 text-status-error hover:text-status-error"
-        >
-          <TrashOutlineIcon className="h-4 w-4" />
-          <span className="hidden sm:inline">Delete Playlist</span>
-        </Button>
+        {!offlineMode && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowPlaylistDelete(true)}
+            className="gap-1.5 text-status-error hover:text-status-error"
+          >
+            <TrashOutlineIcon className="h-4 w-4" />
+            <span className="hidden sm:inline">Delete Playlist</span>
+          </Button>
+        )}
       </div>
 
-      <MediaBulkActions
-        selectedItems={bulk.selectedItems}
-        onClearSelection={bulk.clear}
-        onRefresh={onTracksChanged}
-        extraActions={[
-          {
-            key: "removeFromPlaylist",
-            label: "Remove from Playlist",
-            loadingLabel: "Removing...",
-            onClick: () => setShowBulkRemove(true),
-            isLoading: bulkLoading,
-          },
-        ]}
-      />
+      {!offlineMode && (
+        <MediaBulkActions
+          selectedItems={bulk.selectedItems}
+          onClearSelection={bulk.clear}
+          onRefresh={onTracksChanged}
+          extraActions={[
+            {
+              key: "removeFromPlaylist",
+              label: "Remove from Playlist",
+              loadingLabel: "Removing...",
+              onClick: () => setShowBulkRemove(true),
+              isLoading: bulkLoading,
+            },
+          ]}
+        />
+      )}
 
       <div className="rounded-lg border border-border overflow-hidden">
         <MediaListView
@@ -348,9 +376,9 @@ export function PlaylistDetailView({
           sortOptions={PLAYLIST_TRACK_SORT_OPTIONS}
           onRowClick={startPlayback}
           onClip={onClip}
-          extraActions={trackActions}
+          extraActions={offlineMode ? [] : trackActions}
           leadingColumns={[
-            positionColumn<PlaylistTrack>({ draggable: viewMode === "table" }),
+            positionColumn<PlaylistTrack>({ draggable: viewMode === "table" && !offlineMode }),
           ]}
           emptyMessage="No tracks in this playlist"
           showPlaybackProgress={resumeEnabled}
@@ -365,7 +393,7 @@ export function PlaylistDetailView({
               ? "bg-matrix/10"
               : undefined
           }
-          selection={bulk.selection}
+          selection={offlineMode ? undefined : bulk.selection}
           dragAndDrop={{
             // Always supplied, gated by `disabled`: dropping the prop instead
             // would remount the list on every sort change.

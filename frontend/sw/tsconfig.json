@@ -1,0 +1,22 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // WebWorker replaces DOM rather than joining it: the two libs redeclare many of
+    // the same globals and including both is a wall of duplicate-identifier errors.
+    // The practical consequence is that anything sw.ts imports must be worker-safe,
+    // which is why app/lib/offline*.ts never touch window or document.
+    "lib": ["ES2022", "WebWorker"],
+    "types": [],
+    "noEmit": true,
+    "incremental": false,
+    "plugins": []
+  },
+  // Listed explicitly rather than globbed: this set is exactly what the worker may
+  // import, and anything added here must be free of window/document/localStorage.
+  "include": [
+    "sw.ts",
+    "../app/lib/offlineRange.ts",
+    "../app/lib/offlineDb.ts",
+    "../app/lib/offlineRoutes.ts"
+  ]
+}

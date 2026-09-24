@@ -61,13 +61,23 @@ identical access repos — **`media_access.py` is hand-written and deliberately 
 guess: `/media-details` also owns **tags and ratings** (they have no router of their own), and its
 keyword `search` supports `&&` / `||` operators (parsed in `_build_search_condition`,
 `repositories/media_details.py` — `&&` binds tighter than `||`, and single `&` / `|` are literal).
-`/health` is inline in `main.py`.
+`/health` is inline in `main.py`, as is the SPA catch-all, which **404s any unmatched path under
+`/api/`** instead of falling through to `index.html`. Without that guard an unknown endpoint answers
+200 with a page of HTML, which no client can tell from a real response — the service worker deciding
+whether a reply is cacheable least of all. `resolve_spa_file` returns `None` for those paths;
+everything else still falls back to the shell so client-side routes keep booting.
 
 ### Frontend (`frontend/app/`)
 
 Next 16 (Turbopack, flat ESLint config, Tailwind v4 CSS-first) statically exported in production.
 **There are two hook directories**: `hooks/useTaskProgress.ts` (SSE) lives in `app/hooks/`,
-everything else in `app/_hooks/`. The toolchain carries several constraints that are easy to undo by
+everything else in `app/_hooks/`. **Offline mode** adds a service worker built out of `frontend/sw/`
+by a `postbuild` step; it is type-checked separately against `lib: WebWorker`, so the modules it
+shares with the app must stay free of `window`/`document` — see `.claude/rules/frontend.md`. It only
+registers over HTTPS, which is why `docs/CONFIGURATION.md` carries a TLS section. **Offline mode is
+playback-only**: every server-touching control is hidden behind `useOffline()` while it is on, and
+playlists come from a membership snapshot (`GET /playlists?include_media_ids=true`) — the gates and
+the snapshot's semantics are in that rule file too. The toolchain carries several constraints that are easy to undo by
 accident — Tailwind's `@theme inline` block, the non-monotonic radius scale, `@source` paths,
 `allowedDevOrigins` — all in `.claude/rules/frontend.md`.
 

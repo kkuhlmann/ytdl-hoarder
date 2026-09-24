@@ -19,6 +19,7 @@ import { useTriStateSort } from "@/app/_hooks/useTriStateSort"
 import { useResumePlayback } from "@/app/_hooks/useResumePlayback"
 import { MediaBulkActions } from "@/app/_components/media/MediaBulkActions"
 import { useMediaPlayer, LIBRARY_MIX_PLAYLIST_ID } from "@/app/context/MediaPlayerContext"
+import { useOffline } from "@/app/context/OfflineContext"
 import { DownloadButton } from "./DownloadButton"
 import { TablePagination } from "@/app/_components/TablePagination"
 import { VideoPlayer } from "@/app/_components/MediaPlayer"
@@ -41,6 +42,7 @@ import axios from "axios"
 import toast from "react-hot-toast"
 import { apiUrl } from "@/app/lib/api"
 import { mediaApi } from "@/app/lib/mediaApi"
+import { offlineTags } from "@/app/lib/offlineLibrary"
 import { saveRating } from "@/app/_hooks/useMediaActions"
 
 // Stable identity so an empty selection doesn't re-render the table every pass.
@@ -117,11 +119,15 @@ export function DownloadsCard({
   setStatus,
   search,
   setSearch,
-  semanticSearch,
+  semanticSearch: semanticSearchProp,
   setSemanticSearch,
   semanticWeight,
   setSemanticWeight,
 }: DownloadsCardProps) {
+  const { offlineMode } = useOffline()
+  // Offline mode is playback-only. The transcript search is a server query, so a
+  // query typed before the switch is treated as empty rather than left to fail.
+  const semanticSearch = offlineMode ? "" : semanticSearchProp
   const [tableRows, setTableRows] = useState<any[]>([])
   const [semanticState, setSemanticState] = useState<{ key: string; rows: any[] }>({
     key: "",
@@ -221,7 +227,7 @@ export function DownloadsCard({
 
   // "Group by" folder navigation for the grid view (COMPLETE status only)
   const grouping = useDownloadGrouping({
-    enabled: effectiveViewMode === "grid" && status === "COMPLETE",
+    enabled: effectiveViewMode === "grid" && status === "COMPLETE" && !offlineMode,
     status,
     search,
     tagIds: selectedTagIds,
@@ -314,7 +320,7 @@ export function DownloadsCard({
           console.error("Failed to fetch media details:", err)
         }),
     [metadataKey, rowSelect.media_details_id],
-    { enabled: metadataKey !== "" }
+    { enabled: metadataKey !== "" && !offlineMode }
   )
 
   // Opens the inline queue player when the queue reaches a VIDEO track, which
@@ -373,11 +379,11 @@ export function DownloadsCard({
   }
 
   const loadTags = useCallback(() => {
-    axios
-      .get(apiUrl(mediaApi.allTags))
-      .then((response) => setAllTags(response.data))
-      .catch(() => {})
-  }, [])
+    const tags = offlineMode
+      ? offlineTags()
+      : axios.get(apiUrl(mediaApi.allTags)).then((response) => response.data as TagInfo[])
+    tags.then(setAllTags).catch(() => {})
+  }, [offlineMode])
 
   useEffect(() => {
     loadTags()
@@ -758,7 +764,7 @@ export function DownloadsCard({
 
   const selectedItems = (tableRows as Download[]).filter((r) => selectedIds.has(r.media_details_id))
   const allSelected = tableRows.length > 0 && tableRows.every((r: any) => selectedIds.has(r.media_details_id))
-  const selectionActive = status === "COMPLETE" && effectiveViewMode === "table"
+  const selectionActive = status === "COMPLETE" && effectiveViewMode === "table" && !offlineMode
 
   const handleSelectAll = (selected: boolean) => {
     if (selected) {
@@ -808,41 +814,45 @@ export function DownloadsCard({
       transition={{ duration: 0.3 }}
       className="space-y-4"
     >
-      <div className="md:hidden">
-        <button
-          onClick={() => setShowDownloadForm(!showDownloadForm)}
-          className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-mono transition-colors bg-bg-surface text-text-muted hover:text-text-secondary border border-border"
-        >
-          <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-          New Download
-          <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${showDownloadForm ? "rotate-180" : ""}`} />
-        </button>
-        <AnimatePresence>
-          {showDownloadForm && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="pt-2">
-                <DownloadButton
-                  options={downloadOptions}
-                  setOptions={setDownloadOptions}
-                />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      {!offlineMode && (
+        <div className="md:hidden">
+          <button
+            onClick={() => setShowDownloadForm(!showDownloadForm)}
+            className="w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-mono transition-colors bg-bg-surface text-text-muted hover:text-text-secondary border border-border"
+          >
+            <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+            New Download
+            <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${showDownloadForm ? "rotate-180" : ""}`} />
+          </button>
+          <AnimatePresence>
+            {showDownloadForm && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                className="overflow-hidden"
+              >
+                <div className="pt-2">
+                  <DownloadButton
+                    options={downloadOptions}
+                    setOptions={setDownloadOptions}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
-      <div className="hidden md:block">
-        <DownloadButton
-          options={downloadOptions}
-          setOptions={setDownloadOptions}
-        />
-      </div>
+      {!offlineMode && (
+        <div className="hidden md:block">
+          <DownloadButton
+            options={downloadOptions}
+            setOptions={setDownloadOptions}
+          />
+        </div>
+      )}
 
       <Card>
         {clipTarget ? (
@@ -861,17 +871,19 @@ export function DownloadsCard({
               videoRefCallback={handleVideoRef}
               onTimeUpdate={setVideoCurrentTime}
             />
-            <VideoClippingControls
-              mediaDetailsId={mediaPlayer.media_details_id}
-              duration={mediaPlayer.duration || videoElementDuration}
-              currentTime={videoCurrentTime}
-              onSeek={(time) => {
-                if (videoRefRef.current) {
-                  videoRefRef.current.currentTime = time
-                }
-              }}
-              videoRef={videoRefRef}
-            />
+            {!offlineMode && (
+              <VideoClippingControls
+                mediaDetailsId={mediaPlayer.media_details_id}
+                duration={mediaPlayer.duration || videoElementDuration}
+                currentTime={videoCurrentTime}
+                onSeek={(time) => {
+                  if (videoRefRef.current) {
+                    videoRefRef.current.currentTime = time
+                  }
+                }}
+                videoRef={videoRefRef}
+              />
+            )}
           </CardContent>
         ) : displayVideo ? (
           <CardContent className="pt-6 space-y-4">
@@ -931,30 +943,34 @@ export function DownloadsCard({
                 </div>
               )}
             </div>
-            <VideoClippingControls
-              mediaDetailsId={rowSelect.media_details_id}
-              duration={rowSelect.duration || videoElementDuration}
-              currentTime={videoCurrentTime}
-              onSeek={(time) => {
-                if (videoRefRef.current) {
-                  videoRefRef.current.currentTime = time
-                }
-              }}
-              videoRef={videoRefRef}
-            />
+            {!offlineMode && (
+              <VideoClippingControls
+                mediaDetailsId={rowSelect.media_details_id}
+                duration={rowSelect.duration || videoElementDuration}
+                currentTime={videoCurrentTime}
+                onSeek={(time) => {
+                  if (videoRefRef.current) {
+                    videoRefRef.current.currentTime = time
+                  }
+                }}
+                videoRef={videoRefRef}
+              />
+            )}
           </CardContent>
         ) : (
           <>
             <CardHeader className="pb-3">
               <div className="flex flex-row items-center justify-between gap-2 sm:gap-3 overflow-x-auto [&::-webkit-scrollbar]:hidden">
                 <div className="flex items-center flex-nowrap shrink-0 gap-1.5 sm:gap-3">
-                  <ScopeSelector
-                    value={status}
-                    onChange={(next) => {
-                      setStatus(next)
-                      setPageNumber(1)
-                    }}
-                  />
+                  {!offlineMode && (
+                    <ScopeSelector
+                      value={status}
+                      onChange={(next) => {
+                        setStatus(next)
+                        setPageNumber(1)
+                      }}
+                    />
+                  )}
                   {status === "COMPLETE" && (
                     <>
                       <FiltersPopover
@@ -1010,15 +1026,17 @@ export function DownloadsCard({
                     className="pl-9"
                   />
                 </div>
-                <div className="relative flex-1">
-                  <BookOpenIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-                  <Input
-                    placeholder="Semantic transcript search..."
-                    value={semanticSearch}
-                    onChange={handleSemanticInputChange}
-                    className="pl-9"
-                  />
-                </div>
+                {!offlineMode && (
+                  <div className="relative flex-1">
+                    <BookOpenIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
+                    <Input
+                      placeholder="Semantic transcript search..."
+                      value={semanticSearch}
+                      onChange={handleSemanticInputChange}
+                      className="pl-9"
+                    />
+                  </div>
+                )}
               </div>
 
               {semanticSearch.length >= 3 && (

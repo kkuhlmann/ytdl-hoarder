@@ -71,7 +71,7 @@ export function StatsCard() {
   return (
     <Card className="bg-bg-terminal border-border">
       <CardContent className="space-y-4">
-        <div className="sticky top-14 z-30 -mx-3 md:-mx-6 px-3 md:px-6 py-2 bg-bg-terminal/95 backdrop-blur-sm supports-backdrop-filter:bg-bg-terminal/70 border-b border-border rounded-t-lg">
+        <div className="sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-30 -mx-3 md:-mx-6 px-3 md:px-6 py-2 bg-bg-terminal/95 backdrop-blur-sm supports-backdrop-filter:bg-bg-terminal/70 border-b border-border rounded-t-lg">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <StatsFilterCombobox value={filter} onChange={setFilter} />
             <GranularityToggle value={granularity} onChange={setGranularity} />

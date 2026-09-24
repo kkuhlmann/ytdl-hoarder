@@ -20,6 +20,13 @@ import { apiUrl } from "@/app/lib/api"
 import { useAuth } from "@/app/context/AuthContext"
 import { useAdmin } from "@/app/context/AdminContext"
 import { ThemeSwitcher } from "@/app/_components/ThemeSwitcher"
+import { OfflineToggle } from "@/app/_components/OfflineToggle"
+import { useOffline } from "@/app/context/OfflineContext"
+import {
+  OfflineStorageButton,
+  OfflineStorageDialog,
+} from "@/app/_components/OfflineStorageDialog"
+import { MobileNavMenu } from "@/app/_components/MobileNavMenu"
 import { ThemePicker } from "@/app/_components/ThemePicker"
 import { ChangePasswordDialog } from "@/app/_components/auth/ChangePasswordDialog"
 import {
@@ -71,11 +78,15 @@ export function NavigationBar() {
   const { view, setView } = useView()
   const { user, logout } = useAuth()
   const { adminMode, setAdminMode } = useAdmin()
+  const { offlineMode } = useOffline()
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [ytdlpVersion, setYtdlpVersion] = useState<string | null>(null)
   const [storageUsed, setStorageUsed] = useState<number | null>(null)
   const [storageLimit, setStorageLimit] = useState<number | null>(null)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  // Held here, not inside the dialog: the mobile entry point is a menu item, and
+  // the menu unmounts its own children on select.
+  const [storageOpen, setStorageOpen] = useState(false)
 
   // Track theme changes for conditional rendering (e.g. GeoCities color picker)
   const currentTheme = useDocumentTheme()
@@ -110,7 +121,8 @@ export function NavigationBar() {
   }, [user])
 
   const { refetch: refreshStorage } = useFetchEffect(fetchStorage, [fetchStorage], {
-    pollMs: 60_000,
+    enabled: !offlineMode,
+    pollMs: offlineMode ? null : 60_000,
   })
 
   useEffect(() => {
@@ -169,9 +181,15 @@ export function NavigationBar() {
 
   return (
     <nav className="sticky top-0 z-40 w-full border-b border-border bg-bg-terminal/95 backdrop-blur-sm supports-backdrop-filter:bg-bg-terminal/60">
+      {/* Standalone iOS draws the page under the status bar (viewportFit cover +
+          black-translucent, layout.tsx); light themes paint this dark in globals.css
+          so the white clock stays legible. */}
+      <div className="status-bar-inset h-[env(safe-area-inset-top)]" />
       <div className="mx-auto px-4">
         <div className="grid grid-cols-[1fr_auto_1fr] h-14 items-center">
-          {/* Logo/Brand */}
+          {/* Logo/Brand — everything here is hidden below sm. Keep it that way:
+              min-w-0 lets this grid track shrink below its content, and the wrapper
+              overflows visibly, so always-visible children spill over the nav. */}
           <div className="flex items-center gap-2 min-w-0">
             <span className="hidden sm:inline text-sm font-mono font-semibold text-matrix">
               ytdl-hoarder
@@ -202,17 +220,26 @@ export function NavigationBar() {
             ))}
           </ul>
 
-          {/* Right side - User info + Theme */}
-          <div className="hidden sm:flex items-center gap-3 justify-end min-w-0">
-            <ThemeSwitcher />
-            {currentTheme === "geocities" && <ThemePicker />}
+          {/* Right side - User info + Theme. The cluster itself renders at every
+              width; each desktop-only child carries its own `hidden sm:*`, so a
+              phone gets exactly one item here — the overflow menu. */}
+          <div className="flex items-center gap-3 justify-end">
+            <OfflineToggle className="hidden sm:flex" />
+            <OfflineStorageButton
+              onClick={() => setStorageOpen(true)}
+              className="hidden sm:flex"
+            />
+            <span className="hidden sm:contents">
+              <ThemeSwitcher />
+              {currentTheme === "geocities" && !offlineMode && <ThemePicker />}
+            </span>
             {user && (
               <>
-                {user.is_admin && (
+                {user.is_admin && !offlineMode && (
                   <button
                     onClick={() => setAdminMode(!adminMode)}
                     className={cn(
-                      "flex items-center gap-1 px-2 py-1 text-xs font-mono rounded transition-colors",
+                      "hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono rounded transition-colors",
                       adminMode
                         ? "bg-status-warning/20 text-status-warning border border-status-warning/30"
                         : "text-text-muted hover:text-text-secondary"
@@ -238,25 +265,49 @@ export function NavigationBar() {
                     {formatBytes(storageUsed)} / {formatBytes(storageLimit)}
                   </span>
                 )}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted hover:text-matrix transition-colors rounded shrink-0"
-                      title={user.username}
-                    >
-                      <UserCircleIcon className="w-4 h-4 lg:hidden" />
-                      <span className="hidden lg:inline">{user.username}</span>
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
-                      Change Password
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={logout}>
-                      Sign out
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {/* Signing out offline would discard the cached identity that
+                    unlocks the downloaded library, with no server to sign back
+                    in against — so the account menu waits for the connection. */}
+                {offlineMode ? (
+                  <span
+                    className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted shrink-0"
+                    title={user.username}
+                  >
+                    <UserCircleIcon className="w-4 h-4 lg:hidden" />
+                    <span className="hidden lg:inline">{user.username}</span>
+                  </span>
+                ) : (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="hidden sm:flex items-center gap-1 px-2 py-1 text-xs font-mono text-text-muted hover:text-matrix transition-colors rounded shrink-0"
+                        title={user.username}
+                      >
+                        <UserCircleIcon className="w-4 h-4 lg:hidden" />
+                        <span className="hidden lg:inline">{user.username}</span>
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => setChangePasswordOpen(true)}>
+                        Change Password
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={logout}>
+                        Sign out
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+
+                <span className="sm:hidden">
+                  <MobileNavMenu
+                    isAdmin={Boolean(user.is_admin)}
+                    adminMode={adminMode}
+                    setAdminMode={setAdminMode}
+                    onOpenStorage={() => setStorageOpen(true)}
+                    onOpenChangePassword={() => setChangePasswordOpen(true)}
+                    onSignOut={logout}
+                  />
+                </span>
               </>
             )}
           </div>
@@ -264,6 +315,7 @@ export function NavigationBar() {
       </div>
 
       <ChangePasswordDialog open={changePasswordOpen} onOpenChange={setChangePasswordOpen} />
+      <OfflineStorageDialog open={storageOpen} onOpenChange={setStorageOpen} />
     </nav>
   )
 }

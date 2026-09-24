@@ -3,7 +3,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +37,11 @@ STATIC_DIR = Path(os.getenv('STATIC_FILES_DIR', '/app/static'))
 SERVE_FRONTEND = STATIC_DIR.exists() and (STATIC_DIR / 'index.html').exists()
 
 API_PREFIX = '/api' if SERVE_FRONTEND else ''
+
+# Spelled out rather than derived from API_PREFIX: the catch-all exists only when
+# the frontend is served, which is exactly when the prefix is '/api', and deriving
+# it would make the guard match every path in the dev config, where it is ''.
+SPA_RESERVED_PREFIX = 'api'
 
 
 def docs_kwargs(serve_frontend: bool) -> dict[str, str | None]:
@@ -161,14 +166,23 @@ def healthcheck():
     return {'status': 'ok'}
 
 
-def resolve_spa_file(path: str) -> Path:
+def resolve_spa_file(path: str) -> Path | None:
     """Map a request path to a file to serve, defaulting to the SPA entrypoint.
+
+    Returns None for anything under the API prefix, which the caller turns into a
+    404. Without that an unmatched `/api/*` falls through to index.html and an
+    unknown endpoint answers 200 with a page of HTML, which a client cannot tell
+    from a real response — a service worker deciding whether a reply is cacheable
+    least of all.
 
     Containment must be re-checked *after* resolving: uvicorn percent-decodes the
     request path before routing and Starlette's `:path` convertor matches `..`, so
     the raw join escapes STATIC_DIR (`/%2e%2e/%2e%2e/etc/app/config.yml`). Resolving
     also collapses symlinks that point outside the static root.
     """
+    if path == SPA_RESERVED_PREFIX or path.startswith(f'{SPA_RESERVED_PREFIX}/'):
+        return None
+
     static_root = STATIC_DIR.resolve()
     index = static_root / 'index.html'
 
@@ -198,7 +212,10 @@ if SERVE_FRONTEND:
     # Catch-all route for SPA - must be after API routes
     @app.get('/{path:path}')
     async def serve_spa(path: str):
-        return FileResponse(resolve_spa_file(path))
+        target = resolve_spa_file(path)
+        if target is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Not found')
+        return FileResponse(target)
 else:
     # Dev only: the production image serves the frontend same-origin and never
     # registers CORS at all. What actually keeps a foreign site from reading the

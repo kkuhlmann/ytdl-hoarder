@@ -26,6 +26,7 @@ export type Download = {
   media_type: string
   url: string
   file_path?: string
+  file_size_bytes?: number
   transcript_task_progress?: number
   transcript_task_status?: string
   created_at?: string
